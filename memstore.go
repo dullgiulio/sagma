@@ -27,7 +27,7 @@ func newMemstore() *memstore {
 	}
 }
 
-func (m *memstore) store(msg *message) error {
+func (m *memstore) Store(msg *message) error {
 	func() {
 		states, ok := m.messagesByID[msg.id]
 		if !ok {
@@ -50,21 +50,21 @@ func (m *memstore) store(msg *message) error {
 	return nil
 }
 
-func (m *memstore) openTransaction() {
+func (m *memstore) OpenTransaction() {
 	m.mux.Lock()
 }
 
-func (m *memstore) commitTransaction() error {
+func (m *memstore) CommitTransaction() error {
 	m.mux.Unlock()
 	return nil
 }
 
-func (m *memstore) discardTransaction() {
+func (m *memstore) DiscardTransaction() {
 	m.mux.Unlock()
 }
 
 // idempotent, if already marked we should not care
-func (m *memstore) markRunnable(id msgID, state state) error {
+func (m *memstore) MarkRunnable(id msgID, state state) error {
 	marked := m.statusByID[id][state].runnable // TODO: check existence
 	if marked {
 		return nil
@@ -74,12 +74,12 @@ func (m *memstore) markRunnable(id msgID, state state) error {
 	return nil
 }
 
-func (m *memstore) fetchRunnable() (msgID, state) {
+func (m *memstore) FetchRunnable() (msgID, state) {
 	ms := <-m.runnable
 	return ms.id, ms.state
 }
 
-func (m *memstore) setHandlingStarted(id msgID, state state) error {
+func (m *memstore) LockHandling(id msgID, state state) error {
 	states, ok := m.statusByID[id]
 	if !ok {
 		return fmt.Errorf("message %s not in status store", id)
@@ -94,7 +94,7 @@ func (m *memstore) setHandlingStarted(id msgID, state state) error {
 	return nil
 }
 
-func (m *memstore) setHandlingEnded(id msgID, state state) error {
+func (m *memstore) UnlockHandling(id msgID, state state) error {
 	states, ok := m.statusByID[id]
 	if !ok {
 		return fmt.Errorf("message %s not in status store", id)
@@ -113,7 +113,7 @@ func (m *memstore) setHandlingEnded(id msgID, state state) error {
 	return nil
 }
 
-func (m *memstore) fetchAtState(id msgID, state state) (*message, error) {
+func (m *memstore) FetchAtState(id msgID, state state) (*message, error) {
 	states, ok := m.messagesByID[id]
 	if !ok {
 		return nil, fmt.Errorf("message %s not in store", id)
@@ -125,7 +125,7 @@ func (m *memstore) fetchAtState(id msgID, state state) (*message, error) {
 	return msg, nil
 }
 
-func (m *memstore) fetchStates(id msgID, saga *saga) ([]messageStatus, error) {
+func (m *memstore) FetchStates(id msgID, saga *saga) ([]messageStatus, error) {
 	statuses, ok := m.statusByID[id]
 	if !ok {
 		return nil, fmt.Errorf("unknown message %s", id)

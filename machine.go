@@ -8,10 +8,10 @@ import (
 type machine struct {
 	msgs  chan *message
 	saga  *saga
-	store *memstore
+	store store
 }
 
-func newMachine(saga *saga, store *memstore) *machine {
+func newMachine(saga *saga, store store) *machine {
 	m := &machine{
 		msgs:  make(chan *message),
 		saga:  saga,
@@ -30,7 +30,7 @@ func (m *machine) stop() {
 
 func (m *machine) runRunnables(sleep time.Duration) {
 	for {
-		id, state := m.store.fetchRunnable()
+		id, state := m.store.FetchRunnable()
 		if err := m.transitionRunnable(id, state); err != nil {
 			fmt.Printf("ERROR: message %s at state %s: %v\n", id, state, err)
 		}
@@ -40,17 +40,17 @@ func (m *machine) runRunnables(sleep time.Duration) {
 
 func (m *machine) transitionRunnable(id msgID, state state) error {
 	// book runnable for exclusive start
-	m.store.openTransaction()
-	if err := m.store.setHandlingStarted(id, state); err != nil {
-		m.store.discardTransaction()
+	m.store.OpenTransaction()
+	if err := m.store.LockHandling(id, state); err != nil {
+		m.store.DiscardTransaction()
 		return fmt.Errorf("cannot mark handler started: %v", err)
 	}
-	msg, err := m.store.fetchAtState(id, state)
+	msg, err := m.store.FetchAtState(id, state)
 	if err != nil {
-		m.store.discardTransaction()
+		m.store.DiscardTransaction()
 		return fmt.Errorf("cannot fetch message for handler: %v", err)
 	}
-	if err := m.store.commitTransaction(); err != nil {
+	if err := m.store.CommitTransaction(); err != nil {
 		return fmt.Errorf("cannot commit transaction for start handling: %v", err)
 	}
 
@@ -63,16 +63,16 @@ func (m *machine) transitionRunnable(id msgID, state state) error {
 	}
 
 	// TODO: errors in this block should be retried, we know the handler ran
-	m.store.openTransaction()
-	if err := m.store.setHandlingEnded(id, state); err != nil {
-		m.store.discardTransaction()
+	m.store.OpenTransaction()
+	if err := m.store.UnlockHandling(id, state); err != nil {
+		m.store.DiscardTransaction()
 		return fmt.Errorf("cannot mark handler finished: %v", err)
 	}
 	if err := m.markNextRunnable(msg.id); err != nil {
-		m.store.discardTransaction()
+		m.store.DiscardTransaction()
 		return fmt.Errorf("cannot mark next runnable: %v", err)
 	}
-	if err := m.store.commitTransaction(); err != nil {
+	if err := m.store.CommitTransaction(); err != nil {
 		return fmt.Errorf("cannot commit transaction for end handling: %v", err)
 	}
 
@@ -82,7 +82,7 @@ func (m *machine) transitionRunnable(id msgID, state state) error {
 
 func (m *machine) markNextRunnable(id msgID) error {
 	// check completion level
-	statuses, err := m.store.fetchStates(id, m.saga)
+	statuses, err := m.store.FetchStates(id, m.saga)
 	if err != nil {
 		return fmt.Errorf("ERROR: cannot fetch states for message %s: %v\n", id, err)
 	}
@@ -93,7 +93,7 @@ func (m *machine) markNextRunnable(id msgID) error {
 			break
 		}
 		if !status.handleStarted {
-			if err := m.store.markRunnable(id, status.state); err != nil {
+			if err := m.store.MarkRunnable(id, status.state); err != nil {
 				return fmt.Errorf("cannot store runnable mark: %v", err)
 			}
 			lastReceivedState = status.state
@@ -110,21 +110,21 @@ func (m *machine) markNextRunnable(id msgID) error {
 
 func (m *machine) run() {
 	for msg := range m.msgs {
-		m.store.openTransaction()
+		m.store.OpenTransaction()
 
-		if err := m.store.store(msg); err != nil {
+		if err := m.store.Store(msg); err != nil {
 			fmt.Printf("ERROR: cannot store message: %v\n", err)
-			m.store.discardTransaction()
+			m.store.DiscardTransaction()
 			continue
 		}
 		fmt.Printf("INFO: stored message for state %s\n", msg.state)
 
 		if err := m.markNextRunnable(msg.id); err != nil {
-			m.store.discardTransaction()
+			m.store.DiscardTransaction()
 			fmt.Printf("ERROR: cannot mark next runnable: %v\n", err)
 		}
 
-		if err := m.store.commitTransaction(); err != nil {
+		if err := m.store.CommitTransaction(); err != nil {
 			fmt.Printf("ERROR: cannot commit marking of next runnable: %v\n", err)
 		}
 	}
