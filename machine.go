@@ -18,11 +18,21 @@ func newMachine(saga *saga, store store) *machine {
 	return m
 }
 
-func (m *machine) runRunnables(sleep time.Duration) {
+func (m *machine) runRunnable() error {
+	id, state, err := m.store.FetchRunnable()
+	if err != nil {
+		return fmt.Errorf("could not fetch runnable message: %v", err)
+	}
+	if err := m.transitionRunnable(id, state); err != nil {
+		return fmt.Errorf("cannot trasition message %s at state %s: %v", id, state, err)
+	}
+	return nil
+}
+
+func (m *machine) RunRunnables(sleep time.Duration) {
 	for {
-		id, state := m.store.FetchRunnable()
-		if err := m.transitionRunnable(id, state); err != nil {
-			fmt.Printf("ERROR: message %s at state %s: %v\n", id, state, err)
+		if err := m.runRunnable(); err != nil {
+			fmt.Printf("ERROR: runnable: %v\n", err)
 		}
 		time.Sleep(sleep)
 	}
@@ -67,6 +77,7 @@ func (m *machine) transitionRunnable(id msgID, state state) error {
 	}
 
 	fmt.Printf("INFO: handler finished for %s at state %s\n", id, state)
+
 	return nil
 }
 
@@ -95,26 +106,27 @@ func (m *machine) markNextRunnable(id msgID) error {
 	} else {
 		fmt.Printf("INFO: state %s is marked runnable next\n", lastReceivedState)
 	}
+
 	return nil
 }
 
-func (m *machine) receive(msg *message) {
+func (m *machine) Receive(msg *message) error {
 	m.store.OpenTransaction()
 
 	if err := m.store.Store(msg); err != nil {
-		fmt.Printf("ERROR: cannot store message: %v\n", err)
 		m.store.DiscardTransaction()
-		return
+		return fmt.Errorf("cannot store message: %v", err)
 	}
+
 	fmt.Printf("INFO: stored message for state %s\n", msg.state)
 
 	if err := m.markNextRunnable(msg.id); err != nil {
 		m.store.DiscardTransaction()
-		fmt.Printf("ERROR: cannot mark next runnable: %v\n", err)
-		return
+		return fmt.Errorf("cannot mark next message as runnable: %v", err)
 	}
 
 	if err := m.store.CommitTransaction(); err != nil {
-		fmt.Printf("ERROR: cannot commit marking of next runnable: %v\n", err)
+		return fmt.Errorf("cannot commit marking of next runnable: %v", err)
 	}
+	return nil
 }

@@ -6,6 +6,14 @@ import (
 	"time"
 )
 
+func send(wg *sync.WaitGroup, machine *machine, msg *message) {
+	defer wg.Done()
+
+	if err := machine.Receive(msg); err != nil {
+		fmt.Printf("ERROR: cannot send message: %v\n", err)
+	}
+}
+
 func main() {
 	saga := newSaga()
 	stateFirst := state("firstState")
@@ -24,32 +32,29 @@ func main() {
 		return nil
 	})
 	machine := newMachine(saga, newMemstore())
-	go machine.runRunnables(50 * time.Millisecond)
+	go machine.RunRunnables(50 * time.Millisecond)
 	var wg sync.WaitGroup
 	wg.Add(3)
 	go func() {
-		machine.receive(&message{
+		send(&wg, machine, &message{
 			id:    "test",
 			state: stateSecond,
 			body:  "",
 		})
-		wg.Done()
 	}()
 	go func() {
-		machine.receive(&message{
+		send(&wg, machine, &message{
 			id:    "test",
 			state: stateFirst,
 			body:  "",
 		})
-		wg.Done()
 	}()
 	go func() {
-		machine.receive(&message{
+		send(&wg, machine, &message{
 			id:    "test",
 			state: stateThird,
 			body:  "",
 		})
-		wg.Done()
 	}()
 	go func() {
 		wg.Wait()

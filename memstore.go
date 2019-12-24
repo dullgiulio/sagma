@@ -74,9 +74,9 @@ func (m *memstore) MarkRunnable(id msgID, state state) error {
 	return nil
 }
 
-func (m *memstore) FetchRunnable() (msgID, state) {
+func (m *memstore) FetchRunnable() (msgID, state, error) {
 	ms := <-m.runnable
-	return ms.id, ms.state
+	return ms.id, ms.state, nil
 }
 
 func (m *memstore) LockHandling(id msgID, state state) error {

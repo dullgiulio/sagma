@@ -13,7 +13,7 @@ type store interface {
 	MarkRunnable(id msgID, state state) error
 
 	// Returns a message-state that could be ran
-	FetchRunnable() (msgID, state)
+	FetchRunnable() (msgID, state, error)
 
 	// Locks that we handle this message; should fail if message already locked
 	LockHandling(id msgID, state state) error
