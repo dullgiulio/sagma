@@ -6,26 +6,16 @@ import (
 )
 
 type machine struct {
-	msgs  chan *message
 	saga  *saga
 	store store
 }
 
 func newMachine(saga *saga, store store) *machine {
 	m := &machine{
-		msgs:  make(chan *message),
 		saga:  saga,
 		store: store,
 	}
 	return m
-}
-
-func (m *machine) receive(msg *message) {
-	m.msgs <- msg
-}
-
-func (m *machine) stop() {
-	close(m.msgs)
 }
 
 func (m *machine) runRunnables(sleep time.Duration) {
@@ -108,24 +98,23 @@ func (m *machine) markNextRunnable(id msgID) error {
 	return nil
 }
 
-func (m *machine) run() {
-	for msg := range m.msgs {
-		m.store.OpenTransaction()
+func (m *machine) receive(msg *message) {
+	m.store.OpenTransaction()
 
-		if err := m.store.Store(msg); err != nil {
-			fmt.Printf("ERROR: cannot store message: %v\n", err)
-			m.store.DiscardTransaction()
-			continue
-		}
-		fmt.Printf("INFO: stored message for state %s\n", msg.state)
+	if err := m.store.Store(msg); err != nil {
+		fmt.Printf("ERROR: cannot store message: %v\n", err)
+		m.store.DiscardTransaction()
+		return
+	}
+	fmt.Printf("INFO: stored message for state %s\n", msg.state)
 
-		if err := m.markNextRunnable(msg.id); err != nil {
-			m.store.DiscardTransaction()
-			fmt.Printf("ERROR: cannot mark next runnable: %v\n", err)
-		}
+	if err := m.markNextRunnable(msg.id); err != nil {
+		m.store.DiscardTransaction()
+		fmt.Printf("ERROR: cannot mark next runnable: %v\n", err)
+		return
+	}
 
-		if err := m.store.CommitTransaction(); err != nil {
-			fmt.Printf("ERROR: cannot commit marking of next runnable: %v\n", err)
-		}
+	if err := m.store.CommitTransaction(); err != nil {
+		fmt.Printf("ERROR: cannot commit marking of next runnable: %v\n", err)
 	}
 }

@@ -53,8 +53,6 @@ func main() {
 	}()
 	go func() {
 		wg.Wait()
-		machine.stop()
 	}()
-	machine.run()
 	time.Sleep(1 * time.Second)
 }
