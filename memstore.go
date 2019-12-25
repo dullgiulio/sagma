@@ -127,19 +127,15 @@ func (m *memstore) FetchAtState(id msgID, state state) (*message, error) {
 	return msg, nil
 }
 
-func (m *memstore) FetchStates(id msgID, saga *saga) ([]messageStatus, error) {
+func (m *memstore) FetchStates(id msgID, saga *saga) (map[state]messageStatus, error) {
 	statuses, ok := m.statusByID[id]
 	if !ok {
 		return nil, fmt.Errorf("unknown message %s", id)
 	}
-	msgStatuses := make([]messageStatus, len(saga.states))
-	for i, state := range saga.states {
-		status, ok := statuses[state]
-		if !ok {
-			msgStatuses[i] = messageStatus{}
-			continue
-		}
-		msgStatuses[i] = *status
+	// copy statuses map to avoid data races
+	msgStatuses := make(map[state]messageStatus)
+	for state, status := range statuses {
+		msgStatuses[state] = *status
 	}
 	return msgStatuses, nil
 }

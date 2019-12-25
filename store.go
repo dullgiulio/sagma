@@ -29,5 +29,5 @@ type store interface {
 
 	// Fetch all states (past and future) of a message for the saga in saga order
 	// TODO: ordering could be done by the machine
-	FetchStates(id msgID, saga *saga) ([]messageStatus, error)
+	FetchStates(id msgID, saga *saga) (map[state]messageStatus, error)
 }

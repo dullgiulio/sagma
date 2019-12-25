@@ -77,11 +77,31 @@ func (m *machine) transitionRunnable(id msgID, state state) error {
 	return nil
 }
 
-func (m *machine) markNextRunnable(id msgID) error {
+func (m *machine) fetchSortedStates(id msgID) ([]messageStatus, error) {
 	// check completion level
 	statuses, err := m.store.FetchStates(id, m.saga)
 	if err != nil {
-		return fmt.Errorf("ERROR: cannot fetch states for message %s: %v\n", id, err)
+		return nil, fmt.Errorf("cannot fetch states for message %s: %v\n", id, err)
+	}
+
+	// sort states
+	msgStatuses := make([]messageStatus, len(m.saga.states))
+	for i, state := range m.saga.states {
+		status, ok := statuses[state]
+		if !ok {
+			msgStatuses[i] = messageStatus{}
+			continue
+		}
+		msgStatuses[i] = status
+	}
+
+	return msgStatuses, nil
+}
+
+func (m *machine) markNextRunnable(id msgID) error {
+	statuses, err := m.fetchSortedStates(id)
+	if err != nil {
+		return err
 	}
 
 	var lastReceivedState state
