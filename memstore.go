@@ -50,17 +50,19 @@ func (m *memstore) Store(msg *message) error {
 	return nil
 }
 
-func (m *memstore) OpenTransaction() {
+func (m *memstore) Transaction() Transaction {
 	m.mux.Lock()
+	return m
 }
 
-func (m *memstore) CommitTransaction() error {
+func (m *memstore) Commit() error {
 	m.mux.Unlock()
 	return nil
 }
 
-func (m *memstore) DiscardTransaction() {
+func (m *memstore) Discard(err error) error {
 	m.mux.Unlock()
+	return err
 }
 
 // idempotent, if already marked we should not care

@@ -39,18 +39,16 @@ func (m *machine) RunRunnables(sleep time.Duration) {
 }
 
 func (m *machine) transitionRunnable(id msgID, state state) error {
+	transaction := m.store.Transaction()
 	// book runnable for exclusive start
-	m.store.OpenTransaction()
 	if err := m.store.LockHandling(id, state); err != nil {
-		m.store.DiscardTransaction()
-		return fmt.Errorf("cannot mark handler started: %v", err)
+		return transaction.Discard(fmt.Errorf("cannot mark handler started: %v", err))
 	}
 	msg, err := m.store.FetchAtState(id, state)
 	if err != nil {
-		m.store.DiscardTransaction()
-		return fmt.Errorf("cannot fetch message for handler: %v", err)
+		return transaction.Discard(fmt.Errorf("cannot fetch message for handler: %v", err))
 	}
-	if err := m.store.CommitTransaction(); err != nil {
+	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("cannot commit transaction for start handling: %v", err)
 	}
 
@@ -63,16 +61,14 @@ func (m *machine) transitionRunnable(id msgID, state state) error {
 	}
 
 	// TODO: errors in this block should be retried, we know the handler ran
-	m.store.OpenTransaction()
+	transaction = m.store.Transaction()
 	if err := m.store.UnlockHandling(id, state); err != nil {
-		m.store.DiscardTransaction()
-		return fmt.Errorf("cannot mark handler finished: %v", err)
+		return transaction.Discard(fmt.Errorf("cannot mark handler finished: %v", err))
 	}
 	if err := m.markNextRunnable(msg.id); err != nil {
-		m.store.DiscardTransaction()
-		return fmt.Errorf("cannot mark next runnable: %v", err)
+		return transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
 	}
-	if err := m.store.CommitTransaction(); err != nil {
+	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("cannot commit transaction for end handling: %v", err)
 	}
 
@@ -111,21 +107,19 @@ func (m *machine) markNextRunnable(id msgID) error {
 }
 
 func (m *machine) Receive(msg *message) error {
-	m.store.OpenTransaction()
+	transaction := m.store.Transaction()
 
 	if err := m.store.Store(msg); err != nil {
-		m.store.DiscardTransaction()
-		return fmt.Errorf("cannot store message: %v", err)
+		return transaction.Discard(fmt.Errorf("cannot store message: %v", err))
 	}
 
 	fmt.Printf("INFO: stored message for state %s\n", msg.state)
 
 	if err := m.markNextRunnable(msg.id); err != nil {
-		m.store.DiscardTransaction()
-		return fmt.Errorf("cannot mark next message as runnable: %v", err)
+		return transaction.Discard(fmt.Errorf("cannot mark next message as runnable: %v", err))
 	}
 
-	if err := m.store.CommitTransaction(); err != nil {
+	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("cannot commit marking of next runnable: %v", err)
 	}
 	return nil

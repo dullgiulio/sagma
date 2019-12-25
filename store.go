@@ -1,13 +1,17 @@
 package main
 
+type Transaction interface {
+	// Transaction handling
+	Discard(error) error
+	Commit() error
+}
+
 type store interface {
 	// Store a message within a transaction; must reject duplicate messages for a state
 	Store(msg *message) error
 
-	// Transaction handling
-	OpenTransaction()
-	DiscardTransaction()
-	CommitTransaction() error
+	// Returns an opened transaction
+	Transaction() Transaction
 
 	// Idempotent, if already marked we should not care
 	MarkRunnable(id msgID, state state) error

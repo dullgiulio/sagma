@@ -14,6 +14,11 @@ func send(wg *sync.WaitGroup, machine *machine, msg *message) {
 	}
 }
 
+// TODO: cleanup state objects passed to and from store
+// TODO: cleanup dead handlers for retry (reset started handler if not finished before deadline) for N times
+// TODO: delay before dead letter (if not runnable before deadline, notify and remove)
+// TODO: remove completed at deadline
+
 func main() {
 	saga := newSaga()
 	stateFirst := state("firstState")
