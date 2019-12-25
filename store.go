@@ -6,7 +6,7 @@ type Transaction interface {
 	Commit() error
 }
 
-type store interface {
+type Store interface {
 	// Returns an opened transaction
 	Transaction() Transaction
 
@@ -14,6 +14,9 @@ type store interface {
 	Store(msg *message, state state, status stateStatus) error
 	// Fetch message at a specific state
 	Fetch(id msgID, state state, status stateStatus) (*message, error)
+
+	// Dispose or archive of all messages for this ID at all states
+	Dispose(id msgID) error
 
 	// Saves transition status for a message
 	StoreStateStatus(id msgID, state state, currStatus, nextStatus stateStatus) error

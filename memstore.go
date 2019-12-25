@@ -87,6 +87,15 @@ func (m *memstore) StoreStateStatus(id msgID, st state, currStatus, nextStatus s
 	return nil
 }
 
+func (m *memstore) Dispose(id msgID) error {
+	for _, stateMsg := range m.statusStateMsg {
+		for _, msgs := range stateMsg {
+			delete(msgs, id)
+		}
+	}
+	return nil
+}
+
 func (m *memstore) FetchStateStatus(id msgID, state state) (stateStatus, error) {
 	for status, stateMsg := range m.statusStateMsg {
 		msgs, ok := stateMsg[state]

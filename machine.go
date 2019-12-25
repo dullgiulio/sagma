@@ -7,10 +7,10 @@ import (
 
 type machine struct {
 	saga  *saga
-	store store
+	store Store
 }
 
-func newMachine(saga *saga, store store) *machine {
+func newMachine(saga *saga, store Store) *machine {
 	m := &machine{
 		saga:  saga,
 		store: store,
@@ -41,6 +41,20 @@ func (m *machine) RunRunnables(sleep time.Duration) {
 	}
 }
 
+func (m *machine) dispose(id msgID) error {
+	transaction := m.store.Transaction()
+	if err := m.store.Dispose(id); err != nil {
+		return transaction.Discard(fmt.Errorf("store disposal failed: %v", err))
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("cannot commit transaction for end handling: %v", err)
+	}
+
+	fmt.Printf("INFO: disposing of %s\n", id)
+
+	return nil
+}
+
 func (m *machine) transitionRunnable(id msgID, state state) error {
 	transaction := m.store.Transaction()
 	// book runnable for exclusive start
@@ -56,6 +70,7 @@ func (m *machine) transitionRunnable(id msgID, state state) error {
 	}
 
 	fmt.Printf("INFO: handler started for %s at state %s\n", id, state)
+
 	handler, ok := m.saga.handlers[state]
 	if !ok {
 		return fmt.Errorf("state %s does not have a handler, execution finished", state)
@@ -66,23 +81,27 @@ func (m *machine) transitionRunnable(id msgID, state state) error {
 		return fmt.Errorf("handler returned error: %v", err)
 	}
 
-	if nextState == sagaEnd {
-		return nil
-	}
-
 	// TODO: errors in this block should be retried, we know the handler ran
 	transaction = m.store.Transaction()
 	if err := m.store.StoreStateStatus(id, state, stateStatusRunning, stateStatusDone); err != nil {
 		return transaction.Discard(fmt.Errorf("cannot mark handler finished: %v", err))
 	}
-	if err := m.markNextRunnable(msg.id, nextState); err != nil {
-		return transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
+	if nextState != sagaEnd {
+		if err := m.markNextRunnable(msg.id, nextState); err != nil {
+			return transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("cannot commit transaction for end handling: %v", err)
 	}
 
 	fmt.Printf("INFO: handler finished for %s at state %s\n", id, state)
+
+	if nextState == sagaEnd {
+		if err := m.dispose(msg.id); err != nil {
+			return fmt.Errorf("cannot dispose of completed message saga for message %s: %v", msg.id, err)
+		}
+	}
 
 	return nil
 }
