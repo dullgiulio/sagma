@@ -7,27 +7,19 @@ type Transaction interface {
 }
 
 type store interface {
-	// Store a message within a transaction; must reject duplicate messages for a state
-	Store(msg *message) error
-
 	// Returns an opened transaction
 	Transaction() Transaction
 
-	// Idempotent, if already marked we should not care
-	MarkRunnable(id msgID, state state) error
+	// Store a message within a transaction; must reject duplicate messages for a state
+	Store(msg *message, state state, status stateStatus) error
+	// Fetch message at a specific state
+	Fetch(id msgID, state state, status stateStatus) (*message, error)
+
+	// Saves transition status for a message
+	StoreStateStatus(id msgID, state state, currStatus, nextStatus stateStatus) error
+	// Get transition state for a message
+	FetchStateStatus(id msgID, state state) (stateStatus, error)
 
 	// Returns a message-state that could be ran
 	FetchRunnable() (msgID, state, error)
-
-	// Locks that we handle this message; should fail if message already locked
-	LockHandling(id msgID, state state) error
-	// Unlock message; if message not locked, nothing to do
-	UnlockHandling(id msgID, state state) error
-
-	// Fetch message at a specific state
-	FetchAtState(id msgID, state state) (*message, error)
-
-	// Fetch all states (past and future) of a message for the saga in saga order
-	// TODO: ordering could be done by the machine
-	FetchStates(id msgID, saga *saga) (map[state]messageStatus, error)
 }

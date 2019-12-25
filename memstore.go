@@ -6,48 +6,107 @@ import (
 )
 
 type memstore struct {
-	mux sync.Mutex
-
-	messagesByID map[msgID]map[state]*message
-	statusByID   map[msgID]map[state]*messageStatus
-
-	runnable chan *msgIDState
-}
-
-type msgIDState struct {
-	id    msgID
-	state state
+	mux            sync.Mutex
+	statusStateMsg map[stateStatus]map[state]map[msgID]*message
 }
 
 func newMemstore() *memstore {
 	return &memstore{
-		messagesByID: make(map[msgID]map[state]*message),
-		statusByID:   make(map[msgID]map[state]*messageStatus),
-		runnable:     make(chan *msgIDState, 100),
+		statusStateMsg: make(map[stateStatus]map[state]map[msgID]*message),
 	}
 }
 
-func (m *memstore) Store(msg *message) error {
-	func() {
-		states, ok := m.messagesByID[msg.id]
-		if !ok {
-			states = make(map[state]*message)
-		}
-		states[msg.state] = msg
-		m.messagesByID[msg.id] = states
-	}()
-	func() {
-		states, ok := m.statusByID[msg.id]
-		if !ok {
-			states = make(map[state]*messageStatus)
-		}
-		states[msg.state] = &messageStatus{
-			state:    msg.state,
-			received: true,
-		}
-		m.statusByID[msg.id] = states
-	}()
+func (m *memstore) Store(msg *message, st state, status stateStatus) error {
+	stateMsg, ok := m.statusStateMsg[status]
+	if !ok {
+		stateMsg = make(map[state]map[msgID]*message)
+		m.statusStateMsg[status] = stateMsg
+	}
+	msgs, ok := stateMsg[st]
+	if !ok {
+		msgs = make(map[msgID]*message)
+		stateMsg[st] = msgs
+	}
+	if _, ok = msgs[msg.id]; ok {
+		return fmt.Errorf("message %s already in store at state %s in status %s", msg.id, st, status)
+	}
+	msgs[msg.id] = msg
 	return nil
+}
+
+func (m *memstore) Fetch(id msgID, state state, status stateStatus) (*message, error) {
+	msg := func() *message {
+		stateMsg, ok := m.statusStateMsg[status]
+		if !ok {
+			return nil
+		}
+		msgs, ok := stateMsg[state]
+		if !ok {
+			return nil
+		}
+		return msgs[id]
+	}()
+	if msg == nil {
+		return nil, fmt.Errorf("message %s not found at state %s in status %s", msg.id, state, status)
+	}
+	return msg, nil
+}
+
+func (m *memstore) StoreStateStatus(id msgID, st state, currStatus, nextStatus stateStatus) error {
+	// move from one map to the other
+	done := func() bool {
+		stateMsg, ok := m.statusStateMsg[currStatus]
+		if !ok {
+			return false
+		}
+		msgs, ok := stateMsg[st]
+		if !ok {
+			return false
+		}
+		msg, ok := msgs[id]
+		if !ok {
+			return false
+		}
+		delete(msgs, id)
+		stateMsg, ok = m.statusStateMsg[nextStatus]
+		if !ok {
+			stateMsg = make(map[state]map[msgID]*message)
+			m.statusStateMsg[nextStatus] = stateMsg
+		}
+		msgs, ok = stateMsg[st]
+		if !ok {
+			msgs = make(map[msgID]*message)
+			stateMsg[st] = msgs
+		}
+		msgs[id] = msg
+		return true
+	}()
+	if !done {
+		return fmt.Errorf("cannot change status to %s for message %s at state %s in status %s", nextStatus, id, st, currStatus)
+	}
+	return nil
+}
+
+func (m *memstore) FetchStateStatus(id msgID, state state) (stateStatus, error) {
+	for status, stateMsg := range m.statusStateMsg {
+		msgs, ok := stateMsg[state]
+		if !ok {
+			continue
+		}
+		if _, ok = msgs[id]; ok {
+			return status, nil
+		}
+	}
+	return stateStatusWaiting, nil
+}
+
+func (m *memstore) FetchRunnable() (msgID, state, error) {
+	for state, stateMsg := range m.statusStateMsg[stateStatusReady] {
+		for id := range stateMsg {
+			return id, state, nil
+		}
+	}
+	return "", "", nil
 }
 
 func (m *memstore) Transaction() Transaction {
@@ -63,79 +122,4 @@ func (m *memstore) Commit() error {
 func (m *memstore) Discard(err error) error {
 	m.mux.Unlock()
 	return err
-}
-
-// idempotent, if already marked we should not care
-func (m *memstore) MarkRunnable(id msgID, state state) error {
-	marked := m.statusByID[id][state].runnable // TODO: check existence
-	if marked {
-		return nil
-	}
-	m.runnable <- &msgIDState{id: id, state: state}
-	m.statusByID[id][state].runnable = true
-	return nil
-}
-
-func (m *memstore) FetchRunnable() (msgID, state, error) {
-	ms := <-m.runnable
-	return ms.id, ms.state, nil
-}
-
-func (m *memstore) LockHandling(id msgID, state state) error {
-	states, ok := m.statusByID[id]
-	if !ok {
-		return fmt.Errorf("message %s not in status store", id)
-	}
-	if !states[state].received {
-		return fmt.Errorf("message %s not marked as received", id)
-	}
-	if states[state].handleStarted {
-		return fmt.Errorf("message %s already marked as handler started", id)
-	}
-	states[state].handleStarted = true
-	return nil
-}
-
-func (m *memstore) UnlockHandling(id msgID, state state) error {
-	states, ok := m.statusByID[id]
-	if !ok {
-		return fmt.Errorf("message %s not in status store", id)
-	}
-	status := states[state]
-	if !status.received {
-		return fmt.Errorf("message %s not marked as received", id)
-	}
-	if !status.handleStarted {
-		return fmt.Errorf("message %s not marked as handler started", id)
-	}
-	if status.handleFinished {
-		return fmt.Errorf("message %s already marked as handler finished", id)
-	}
-	states[state].handleFinished = true
-	return nil
-}
-
-func (m *memstore) FetchAtState(id msgID, state state) (*message, error) {
-	states, ok := m.messagesByID[id]
-	if !ok {
-		return nil, fmt.Errorf("message %s not in store", id)
-	}
-	msg, ok := states[state]
-	if !ok {
-		return nil, fmt.Errorf("state %s not completed for message %d", state, id)
-	}
-	return msg, nil
-}
-
-func (m *memstore) FetchStates(id msgID, saga *saga) (map[state]messageStatus, error) {
-	statuses, ok := m.statusByID[id]
-	if !ok {
-		return nil, fmt.Errorf("unknown message %s", id)
-	}
-	// copy statuses map to avoid data races
-	msgStatuses := make(map[state]messageStatus)
-	for state, status := range statuses {
-		msgStatuses[state] = *status
-	}
-	return msgStatuses, nil
 }

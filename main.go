@@ -22,19 +22,19 @@ func send(wg *sync.WaitGroup, machine *machine, msg *message) {
 func main() {
 	saga := newSaga()
 	stateFirst := state("firstState")
-	saga.step(stateFirst, func(*message) error {
-		fmt.Printf("handling first state completed\n")
-		return nil
-	})
 	stateSecond := state("secondState")
-	saga.step(stateSecond, func(*message) error {
-		fmt.Printf("handling second state completed\n")
-		return nil
-	})
 	stateThird := state("thirdState")
-	saga.step(stateThird, func(*message) error {
+	saga.begin(stateFirst, func(*message) (state, error) {
+		fmt.Printf("handling first state completed\n")
+		return stateSecond, nil
+	})
+	saga.step(stateSecond, func(*message) (state, error) {
+		fmt.Printf("handling second state completed\n")
+		return stateThird, nil
+	})
+	saga.step(stateThird, func(*message) (state, error) {
 		fmt.Printf("handling third state completed\n")
-		return nil
+		return sagaEnd, nil
 	})
 	machine := newMachine(saga, newMemstore())
 	go machine.RunRunnables(50 * time.Millisecond)

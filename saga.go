@@ -8,26 +8,42 @@ type message struct {
 	body  string
 }
 
-type handler func(msg *message) error
-
 type state string
 
+type handler func(msg *message) (nextState state, err error)
+
+const sagaEnd = state("__end")
+
 type saga struct {
-	states   []state
+	initial  state
 	handlers map[state]handler
 }
 
 func newSaga() *saga {
 	return &saga{
-		states:   make([]state, 0),
 		handlers: make(map[state]handler),
 	}
 }
 
+func (s *saga) begin(state state, handler handler) {
+	s.initial = state
+	s.step(state, handler)
+}
+
 func (s *saga) step(state state, handler handler) {
-	s.states = append(s.states, state)
 	s.handlers[state] = handler
 }
+
+type stateStatus string
+
+const (
+	stateStatusWaiting      stateStatus = ""              // no message yet
+	stateStatusRecvWaiting  stateStatus = "recv-waiting"  // message but not runnable
+	stateStatusReadyWaiting stateStatus = "ready-waiting" // runnable but no message
+	stateStatusReady        stateStatus = "ready"         // both runnable and with message
+	stateStatusRunning      stateStatus = "running"       // handler running
+	stateStatusDone         stateStatus = "done"          // handler completed
+)
 
 type messageStatus struct {
 	state          state
