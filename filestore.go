@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 var statusList = []stateStatus{
@@ -52,20 +51,23 @@ func (f fileprefix) createAllFolders(statuses []stateStatus, states []state) err
 
 type stateFolder string
 
-func (f stateFolder) emitMessages(state state, ids chan<- stateID, batchSize int, sleep time.Duration) error {
+func (f stateFolder) emitMessages(state state, wakeup <-chan struct{}, ids chan<- stateID, batchSize int) error {
 	var (
 		err error
 		n   int
 	)
+	emptyStateID := stateID{}
 	batch := make([]msgID, batchSize)
-	for {
+	for range wakeup {
+		fmt.Printf("DEBUG: received wakeup for %s\n", state)
+
 		n, err = f.scan(batch)
 		if err != nil {
 			return fmt.Errorf("cannot scan folder %s: %v", f, err)
 		}
 
 		if n == 0 {
-			time.Sleep(sleep)
+			ids <- emptyStateID
 			continue
 		}
 
@@ -75,6 +77,7 @@ func (f stateFolder) emitMessages(state state, ids chan<- stateID, batchSize int
 			ids <- stateID{state: state, id: id}
 		}
 	}
+	return nil
 }
 
 func (f stateFolder) scan(ids []msgID) (int, error) {
@@ -108,6 +111,7 @@ type filestore struct {
 	prefix          fileprefix
 	contentFilename string
 	ids             chan stateID
+	wakeup          chan struct{}
 }
 
 func newFilestore(prefix string, states []state) (*filestore, error) {
@@ -115,20 +119,25 @@ func newFilestore(prefix string, states []state) (*filestore, error) {
 	if err := fprefix.createAllFolders(stateStatuses, states); err != nil {
 		return nil, fmt.Errorf("cannot initialize file store folders: %v", err)
 	}
+
 	ids := make(chan stateID)
+	wakeup := make(chan struct{})
+
 	for _, st := range states {
 		folder := fprefix.stateFolder(st, stateStatusReady)
 		go func(st state, folder stateFolder) {
-			if err := folder.emitMessages(st, ids, 100, 1*time.Second); err != nil {
+			if err := folder.emitMessages(st, wakeup, ids, 100); err != nil {
 				fmt.Printf("ERROR: cannot scan runnable for state %s: %v\n", st, err)
 			}
 			// TODO: sleep and retry instead of giving up
 		}(st, folder)
 	}
+
 	return &filestore{
 		ids:             ids,
 		prefix:          fprefix,
 		lockmap:         newMsgLockMap(),
+		wakeup:          wakeup,
 		contentFilename: "contents", // TODO: contents.gz is compression
 	}, nil
 }
@@ -187,12 +196,22 @@ func (f *filestore) FetchStateStatus(id msgID, state state) (stateStatus, error)
 }
 
 func (f *filestore) FetchRunnable() (msgID, state, error) {
+	fmt.Printf("DEBUG: called FetchRunnable\n")
+
+	var s stateID
+
 	select {
-	case s := <-f.ids:
-		return s.id, s.state, nil
+	case s = <-f.ids:
+		fmt.Printf("DEBUG: got some state id\n")
 	default:
-		return "", "", nil
+		fmt.Printf("DEBUG: sending wakeup\n")
+		f.wakeup <- struct{}{}
+		fmt.Printf("DEBUG: sent wakeup\n")
+		s = <-f.ids
 	}
+
+	fmt.Printf("DEBUG: returned runnable %s %s\n", s.id, s.state)
+	return s.id, s.state, nil
 }
 
 func (f *filestore) Transaction(id msgID) Transaction {
