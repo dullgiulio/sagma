@@ -8,7 +8,7 @@ type Transaction interface {
 
 type Store interface {
 	// Returns an opened transaction
-	Transaction() Transaction
+	Transaction(id msgID) Transaction
 
 	// Store a message within a transaction; must reject duplicate messages for a state
 	Store(msg *message, state state, status stateStatus) error

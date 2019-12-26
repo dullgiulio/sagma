@@ -118,7 +118,7 @@ func (m *memstore) FetchRunnable() (msgID, state, error) {
 	return "", "", nil
 }
 
-func (m *memstore) Transaction() Transaction {
+func (m *memstore) Transaction(id msgID) Transaction {
 	m.mux.Lock()
 	return m
 }

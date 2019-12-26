@@ -42,7 +42,7 @@ func (m *machine) RunRunnables(sleep time.Duration) {
 }
 
 func (m *machine) dispose(id msgID) error {
-	transaction := m.store.Transaction()
+	transaction := m.store.Transaction(id)
 	if err := m.store.Dispose(id); err != nil {
 		return transaction.Discard(fmt.Errorf("store disposal failed: %v", err))
 	}
@@ -56,7 +56,7 @@ func (m *machine) dispose(id msgID) error {
 }
 
 func (m *machine) transitionRunnable(id msgID, state state) error {
-	transaction := m.store.Transaction()
+	transaction := m.store.Transaction(id)
 	// book runnable for exclusive start
 	if err := m.store.StoreStateStatus(id, state, stateStatusReady, stateStatusRunning); err != nil {
 		return transaction.Discard(fmt.Errorf("cannot mark handler started: %v", err))
@@ -82,7 +82,7 @@ func (m *machine) transitionRunnable(id msgID, state state) error {
 	}
 
 	// TODO: errors in this block should be retried, we know the handler ran
-	transaction = m.store.Transaction()
+	transaction = m.store.Transaction(id)
 	if err := m.store.StoreStateStatus(id, state, stateStatusRunning, stateStatusDone); err != nil {
 		return transaction.Discard(fmt.Errorf("cannot mark handler finished: %v", err))
 	}
@@ -129,7 +129,7 @@ func (m *machine) markNextRunnable(id msgID, nextState state) error {
 }
 
 func (m *machine) Receive(msg *message) error {
-	transaction := m.store.Transaction()
+	transaction := m.store.Transaction(msg.id)
 
 	currStatus, err := m.store.FetchStateStatus(msg.id, msg.state)
 	if err != nil {

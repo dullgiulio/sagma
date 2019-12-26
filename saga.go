@@ -5,7 +5,7 @@ type msgID string
 type message struct {
 	id    msgID
 	state state
-	body  string
+	body  []byte
 }
 
 type state string
@@ -45,10 +45,10 @@ const (
 	stateStatusDone         stateStatus = "done"          // handler completed
 )
 
-type messageStatus struct {
-	state          state
-	received       bool
-	runnable       bool
-	handleStarted  bool
-	handleFinished bool
+var stateStatuses []stateStatus = []stateStatus{
+	stateStatusRecvWaiting,
+	stateStatusReadyWaiting,
+	stateStatusReady,
+	stateStatusRunning,
+	stateStatusDone,
 }
