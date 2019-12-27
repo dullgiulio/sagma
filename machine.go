@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 )
 
 type machine struct {
@@ -82,11 +83,11 @@ func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
 	if err := m.store.StoreStateStatus(id, state, stateStatusReady, stateStatusRunning); err != nil {
 		return nextRunnable, transaction.Discard(fmt.Errorf("cannot mark handler started: %v", err))
 	}
-	msg, err := m.store.Fetch(id, state, stateStatusRunning)
+	body, err := m.store.Fetch(id, state, stateStatusRunning)
 	if err != nil {
 		return nextRunnable, transaction.Discard(fmt.Errorf("cannot fetch message for handler: %v", err))
 	}
-	defer msg.body.Close()
+	defer body.Close()
 	if err := transaction.Commit(); err != nil {
 		return nextRunnable, fmt.Errorf("cannot commit transaction for start handling: %v", err)
 	}
@@ -96,7 +97,7 @@ func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
 		return nextRunnable, fmt.Errorf("state %s does not have a handler, execution finished", state)
 	}
 
-	nextState, err := handler(msg.id, msg.body)
+	nextState, err := handler(id, body)
 	if err != nil {
 		return nextRunnable, fmt.Errorf("handler returned error: %v", err)
 	}
@@ -111,7 +112,7 @@ func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
 			err             error
 		)
 		if nextState != SagaEnd {
-			if nextStateStatus, err = m.computeNextStateStatus(msg.id, nextState); err != nil {
+			if nextStateStatus, err = m.computeNextStateStatus(id, nextState); err != nil {
 				return transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
 			}
 		}
@@ -140,8 +141,8 @@ func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
 	}
 
 	if nextState == SagaEnd {
-		if err := m.dispose(msg.id); err != nil {
-			return nextRunnable, fmt.Errorf("cannot dispose of completed message saga for message %s: %v", msg.id, err)
+		if err := m.dispose(id); err != nil {
+			return nextRunnable, fmt.Errorf("cannot dispose of completed message saga for message %s: %v", id, err)
 		}
 	}
 
@@ -169,12 +170,22 @@ func (m *machine) computeNextStateStatus(id msgID, nextState state) (stateStatus
 	return nextStateStatus, nil
 }
 
-func (m *machine) Receive(msg *message, state state) error {
-	transaction := m.store.Transaction(msg.id)
-
-	currStatus, err := m.store.FetchStateStatus(msg.id, state)
+func (m *machine) Fetch(id msgID, state state) (io.ReadCloser, error) {
+	body, err := m.store.Fetch(id, state, stateStatusDone)
 	if err != nil {
-		return transaction.Discard(fmt.Errorf("cannot fetch status of state %s for %s: %v", state, msg.id, err))
+		return nil, fmt.Errorf("cannot fetch message: %v", err)
+	}
+	return body, nil
+}
+
+func (m *machine) Receive(id msgID, body io.ReadCloser, state state) error {
+	defer body.Close()
+
+	transaction := m.store.Transaction(id)
+
+	currStatus, err := m.store.FetchStateStatus(id, state)
+	if err != nil {
+		return transaction.Discard(fmt.Errorf("cannot fetch status of state %s for %s: %v", state, id, err))
 	}
 
 	var nextStatus stateStatus
@@ -187,10 +198,10 @@ func (m *machine) Receive(msg *message, state state) error {
 	case stateStatusReadyWaiting:
 		nextStatus = stateStatusReady
 	default:
-		return transaction.Discard(fmt.Errorf("trying to store message %s at state %s in invalid status %s", msg.id, state, currStatus))
+		return transaction.Discard(fmt.Errorf("trying to store message %s at state %s in invalid status %s", id, state, currStatus))
 	}
 
-	if err := m.store.Store(msg, state, nextStatus); err != nil {
+	if err := m.store.Store(id, body, state, nextStatus); err != nil {
 		return transaction.Discard(fmt.Errorf("cannot store message at state %s: %v", state, err))
 	}
 
@@ -199,7 +210,7 @@ func (m *machine) Receive(msg *message, state state) error {
 	}
 
 	if nextStatus == stateStatusReady {
-		m.runnables <- stateID{id: msg.id, state: state}
+		m.runnables <- stateID{id: id, state: state}
 	}
 
 	return nil

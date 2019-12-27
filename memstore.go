@@ -1,41 +1,50 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"sync"
 )
 
+var _ Store = newMemstore()
+
 type memstore struct {
 	mux            sync.Mutex
-	statusStateMsg map[stateStatus]map[state]map[msgID]*message
+	statusStateMsg map[stateStatus]map[state]map[msgID][]byte
 }
 
 func newMemstore() *memstore {
 	return &memstore{
-		statusStateMsg: make(map[stateStatus]map[state]map[msgID]*message),
+		statusStateMsg: make(map[stateStatus]map[state]map[msgID][]byte),
 	}
 }
 
-func (m *memstore) Store(msg *message, st state, status stateStatus) error {
+func (m *memstore) Store(id msgID, body io.Reader, st state, status stateStatus) error {
 	stateMsg, ok := m.statusStateMsg[status]
 	if !ok {
-		stateMsg = make(map[state]map[msgID]*message)
+		stateMsg = make(map[state]map[msgID][]byte)
 		m.statusStateMsg[status] = stateMsg
 	}
 	msgs, ok := stateMsg[st]
 	if !ok {
-		msgs = make(map[msgID]*message)
+		msgs = make(map[msgID][]byte)
 		stateMsg[st] = msgs
 	}
-	if _, ok = msgs[msg.id]; ok {
-		return fmt.Errorf("message %s already in store at state %s in status %s", msg.id, st, status)
+	if _, ok = msgs[id]; ok {
+		return fmt.Errorf("message %s already in store at state %s in status %s", id, st, status)
 	}
-	msgs[msg.id] = msg
+	buf, err := ioutil.ReadAll(body)
+	if err != nil {
+		return fmt.Errorf("could not copy body: %v", err)
+	}
+	msgs[id] = buf
 	return nil
 }
 
-func (m *memstore) Fetch(id msgID, state state, status stateStatus) (*message, error) {
-	msg := func() *message {
+func (m *memstore) Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error) {
+	buf := func() []byte {
 		stateMsg, ok := m.statusStateMsg[status]
 		if !ok {
 			return nil
@@ -46,10 +55,10 @@ func (m *memstore) Fetch(id msgID, state state, status stateStatus) (*message, e
 		}
 		return msgs[id]
 	}()
-	if msg == nil {
-		return nil, fmt.Errorf("message %s not found at state %s in status %s", msg.id, state, status)
+	if buf == nil {
+		return nil, fmt.Errorf("message %s not found at state %s in status %s", id, state, status)
 	}
-	return msg, nil
+	return ioutil.NopCloser(bytes.NewReader(buf)), nil
 }
 
 func (m *memstore) StoreStateStatus(id msgID, st state, currStatus, nextStatus stateStatus) error {
@@ -70,12 +79,12 @@ func (m *memstore) StoreStateStatus(id msgID, st state, currStatus, nextStatus s
 		delete(msgs, id)
 		stateMsg, ok = m.statusStateMsg[nextStatus]
 		if !ok {
-			stateMsg = make(map[state]map[msgID]*message)
+			stateMsg = make(map[state]map[msgID][]byte)
 			m.statusStateMsg[nextStatus] = stateMsg
 		}
 		msgs, ok = stateMsg[st]
 		if !ok {
-			msgs = make(map[msgID]*message)
+			msgs = make(map[msgID][]byte)
 			stateMsg[st] = msgs
 		}
 		msgs[id] = msg

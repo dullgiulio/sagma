@@ -1,5 +1,9 @@
 package main
 
+import (
+	"io"
+)
+
 type Transaction interface {
 	// Transaction handling
 	Discard(error) error
@@ -11,9 +15,9 @@ type Store interface {
 	Transaction(id msgID) Transaction
 
 	// Store a message within a transaction; must reject duplicate messages for a state
-	Store(msg *message, state state, status stateStatus) error
+	Store(id msgID, body io.Reader, state state, status stateStatus) error
 	// Fetch message at a specific state
-	Fetch(id msgID, state state, status stateStatus) (*message, error)
+	Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error)
 
 	// Dispose or archive of all messages for this ID at all states
 	Dispose(id msgID) error

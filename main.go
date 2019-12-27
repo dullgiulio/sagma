@@ -12,8 +12,8 @@ import (
 // TODO: delay before dead letter (if not runnable before deadline, notify and remove)
 // TODO: remove completed at deadline
 
-func send(wg *sync.WaitGroup, machine *machine, state state, msg *message) {
-	if err := machine.Receive(msg, state); err != nil {
+func send(wg *sync.WaitGroup, machine *machine, state state, id msgID, body io.ReadCloser) {
+	if err := machine.Receive(id, body, state); err != nil {
 		fmt.Printf("ERROR: cannot send message: %v\n", err)
 	}
 	wg.Done()
@@ -52,24 +52,11 @@ func main() {
 
 	var wg sync.WaitGroup
 	wg.Add(3)
-	go func() {
-		send(&wg, machine, stateSecond, &message{
-			id:   "test",
-			body: stringReadCloser("second message"),
-		})
-	}()
-	go func() {
-		send(&wg, machine, stateFirst, &message{
-			id:   "test",
-			body: stringReadCloser("first message"),
-		})
-	}()
-	go func() {
-		send(&wg, machine, stateThird, &message{
-			id:   "test",
-			body: stringReadCloser("third message"),
-		})
-	}()
+	go send(&wg, machine, stateSecond, "test", stringReadCloser("second message\n"))
+	go send(&wg, machine, stateFirst, "test", stringReadCloser("first message\n"))
+	go send(&wg, machine, stateThird, "test", stringReadCloser("third message\n"))
+
 	wg.Wait()
+
 	machine.Shutdown()
 }

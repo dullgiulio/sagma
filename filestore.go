@@ -9,16 +9,13 @@ import (
 	"sync"
 )
 
-func writeFile(filename string, r io.ReadCloser, perm os.FileMode) error {
+func writeFile(filename string, r io.Reader, perm os.FileMode) error {
 	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
 	_, err = io.Copy(f, r)
 	if err1 := f.Close(); err == nil {
-		err = err1
-	}
-	if err1 := r.Close(); err == nil {
 		err = err1
 	}
 	return err
@@ -116,19 +113,19 @@ func newFilestore(log *Loggers, prefix string, states []state) (*filestore, erro
 	}, nil
 }
 
-func (f *filestore) Store(msg *message, st state, status stateStatus) error {
-	folder := f.prefix.messageFolder(msg.id, st, status)
+func (f *filestore) Store(id msgID, body io.Reader, st state, status stateStatus) error {
+	folder := f.prefix.messageFolder(id, st, status)
 	if err := os.MkdirAll(string(folder), 0744); err != nil {
 		return fmt.Errorf("cannot make message folder: %v", err)
 	}
 	// TODO: compression
-	if err := writeFile(folder.contentsFile(f.contentFilename), msg.body, 0644); err != nil {
+	if err := writeFile(folder.contentsFile(f.contentFilename), body, 0644); err != nil {
 		return fmt.Errorf("cannot write contents file: %v", err)
 	}
 	return nil
 }
 
-func (f *filestore) Fetch(id msgID, state state, status stateStatus) (*message, error) {
+func (f *filestore) Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error) {
 	folder := f.prefix.messageFolder(id, state, status)
 	file := folder.contentsFile(f.contentFilename)
 	// TODO: decompression
@@ -136,7 +133,7 @@ func (f *filestore) Fetch(id msgID, state state, status stateStatus) (*message, 
 	if err != nil {
 		return nil, fmt.Errorf("cannot read message contents: %v", err)
 	}
-	return &message{id: id, body: fh}, nil
+	return fh, nil
 }
 
 func (f *filestore) StoreStateStatus(id msgID, st state, currStatus, nextStatus stateStatus) error {
