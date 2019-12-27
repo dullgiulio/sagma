@@ -165,8 +165,6 @@ func (f *filestore) FetchStateStatus(id msgID, state state) (stateStatus, error)
 }
 
 func (f *filestore) PollRunnables(ids chan<- stateID) error {
-	return nil
-
 	var wg sync.WaitGroup
 	wg.Add(len(f.states))
 	for _, st := range f.states {

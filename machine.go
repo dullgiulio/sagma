@@ -9,6 +9,8 @@ type machine struct {
 	saga      *saga
 	store     Store
 	runnables chan stateID
+	shutdown  chan struct{}
+	finished  chan struct{}
 }
 
 func newMachine(saga *saga, store Store, log *Loggers) *machine {
@@ -17,6 +19,8 @@ func newMachine(saga *saga, store Store, log *Loggers) *machine {
 		store:     store,
 		log:       log,
 		runnables: make(chan stateID), // TODO: can buffer
+		shutdown:  make(chan struct{}),
+		finished:  make(chan struct{}),
 	}
 	return m
 }
@@ -36,19 +40,27 @@ func (m *machine) runRunnable(id msgID, state state) error {
 }
 
 func (m *machine) Run() {
-	storeDone := make(chan struct{})
 	go func() {
 		if err := m.store.PollRunnables(m.runnables); err != nil {
 			m.log.err.Printf("store scanning failed: %v", err)
 		}
-		close(storeDone)
 	}()
-	for runnable := range m.runnables {
-		if err := m.runRunnable(runnable.id, runnable.state); err != nil {
-			m.log.err.Printf("runnable: %v\n", err)
+	for {
+		select {
+		case runnable := <-m.runnables:
+			if err := m.runRunnable(runnable.id, runnable.state); err != nil {
+				m.log.err.Printf("runnable: %v\n", err)
+			}
+		case <-m.shutdown:
+			close(m.finished)
+			return
 		}
 	}
-	<-storeDone
+}
+
+func (m *machine) Shutdown() {
+	close(m.shutdown)
+	<-m.finished
 }
 
 func (m *machine) dispose(id msgID) error {

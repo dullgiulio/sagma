@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"time"
 )
 
 // TODO: store impl that shards multiple filestores depending on hash of key
@@ -69,8 +68,6 @@ func main() {
 			body: []byte("third message"),
 		})
 	}()
-	go func() {
-		wg.Wait()
-	}()
-	time.Sleep(10 * time.Second)
+	wg.Wait()
+	machine.Shutdown()
 }
