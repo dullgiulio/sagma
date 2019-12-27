@@ -9,6 +9,11 @@ type message struct {
 
 type state string
 
+type stateID struct {
+	id    msgID
+	state state
+}
+
 type handler func(msg *message) (nextState state, err error)
 
 const sagaEnd = state("__end")

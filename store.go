@@ -23,6 +23,6 @@ type Store interface {
 	// Get transition state for a message
 	FetchStateStatus(id msgID, state state) (stateStatus, error)
 
-	// Returns a message-state that could be ran
-	FetchRunnable() (msgID, state, error)
+	// Emits a message-state that could be ran
+	PollRunnables(chan<- stateID) error
 }

@@ -109,13 +109,8 @@ func (m *memstore) FetchStateStatus(id msgID, state state) (stateStatus, error) 
 	return stateStatusWaiting, nil
 }
 
-func (m *memstore) FetchRunnable() (msgID, state, error) {
-	for state, stateMsg := range m.statusStateMsg[stateStatusReady] {
-		for id := range stateMsg {
-			return id, state, nil
-		}
-	}
-	return "", "", nil
+func (m *memstore) PollRunnables(chan<- stateID) error {
+	return nil
 }
 
 func (m *memstore) Transaction(id msgID) Transaction {

@@ -45,7 +45,7 @@ func main() {
 	})
 
 	machine := newMachine(saga, store)
-	go machine.RunRunnables(50 * time.Millisecond)
+	go machine.Run()
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -70,5 +70,5 @@ func main() {
 	go func() {
 		wg.Wait()
 	}()
-	time.Sleep(1 * time.Second)
+	time.Sleep(10 * time.Second)
 }
