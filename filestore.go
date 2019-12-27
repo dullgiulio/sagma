@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/zlib"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -9,12 +10,22 @@ import (
 	"sync"
 )
 
-func writeFile(filename string, r io.Reader, perm os.FileMode) error {
+// TODO: implement atomic file write
+func writeFile(filename string, r io.Reader, perm os.FileMode, compress bool) error {
 	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(f, r)
+	w := io.WriteCloser(f)
+	if compress {
+		w = zlib.NewWriter(w)
+	}
+	_, err = io.Copy(w, r)
+	if compress {
+		if err1 := w.Close(); err == nil {
+			err = err1
+		}
+	}
 	if err1 := f.Close(); err == nil {
 		err = err1
 	}
@@ -38,7 +49,7 @@ func (f msgFolder) contentsFile(filename string) string {
 type fileprefix string
 
 func (f fileprefix) messageFolder(id msgID, state state, status stateStatus) msgFolder {
-	msgid := string(id) // TODO: hash and make it like a0/a0484ff4859abc77
+	msgid := string(id)
 	return msgFolder(filepath.Join(string(f), string(status), string(state), msgid))
 }
 
@@ -93,15 +104,21 @@ type filestore struct {
 	log             *Loggers
 	lockmap         *msgLockMap
 	prefix          fileprefix
+	compress        bool
 	contentFilename string
 	wakeup          chan struct{}
 	states          []state
 }
 
-func newFilestore(log *Loggers, prefix string, states []state) (*filestore, error) {
+func newFilestore(log *Loggers, prefix string, states []state, compress bool) (*filestore, error) {
 	fprefix := fileprefix(prefix)
 	if err := fprefix.createAllFolders(stateStatuses, states); err != nil {
 		return nil, fmt.Errorf("cannot initialize file store folders: %v", err)
+	}
+
+	contentFilename := "contents"
+	if compress {
+		contentFilename = "contents.z"
 	}
 
 	return &filestore{
@@ -109,7 +126,8 @@ func newFilestore(log *Loggers, prefix string, states []state) (*filestore, erro
 		prefix:          fprefix,
 		states:          states,
 		lockmap:         newMsgLockMap(),
-		contentFilename: "contents", // TODO: contents.gz is compression
+		compress:        compress,
+		contentFilename: contentFilename,
 	}, nil
 }
 
@@ -118,8 +136,7 @@ func (f *filestore) Store(id msgID, body io.Reader, st state, status stateStatus
 	if err := os.MkdirAll(string(folder), 0744); err != nil {
 		return fmt.Errorf("cannot make message folder: %v", err)
 	}
-	// TODO: compression
-	if err := writeFile(folder.contentsFile(f.contentFilename), body, 0644); err != nil {
+	if err := writeFile(folder.contentsFile(f.contentFilename), body, 0644, f.compress); err != nil {
 		return fmt.Errorf("cannot write contents file: %v", err)
 	}
 	return nil
@@ -128,12 +145,18 @@ func (f *filestore) Store(id msgID, body io.Reader, st state, status stateStatus
 func (f *filestore) Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error) {
 	folder := f.prefix.messageFolder(id, state, status)
 	file := folder.contentsFile(f.contentFilename)
-	// TODO: decompression
 	fh, err := os.Open(file)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read message contents: %v", err)
 	}
-	return fh, nil
+	r := io.ReadCloser(fh)
+	if f.compress {
+		r, err = zlib.NewReader(fh)
+		if err != nil {
+			return nil, fmt.Errorf("cannot start zlib decompressor on contents file: %v", err)
+		}
+	}
+	return r, nil
 }
 
 func (f *filestore) StoreStateStatus(id msgID, st state, currStatus, nextStatus stateStatus) error {

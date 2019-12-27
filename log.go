@@ -11,6 +11,6 @@ type Loggers struct {
 
 func NewLoggers() *Loggers {
 	return &Loggers{
-		err: log.New(os.Stderr, "error", log.LstdFlags),
+		err: log.New(os.Stderr, "error - ", log.LstdFlags),
 	}
 }
