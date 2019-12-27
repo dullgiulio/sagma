@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// TODO: store impl that shards multiple filestores depending on hash of key
 // TODO: cleanup dead handlers for retry (reset started handler if not finished before deadline) for N times
 // TODO: delay before dead letter (if not runnable before deadline, notify and remove)
 // TODO: remove completed at deadline
@@ -19,6 +20,7 @@ func send(wg *sync.WaitGroup, machine *machine, state state, msg *message) {
 }
 
 func main() {
+	loggers := NewLoggers()
 	saga := newSaga()
 
 	stateFirst := state("firstState")
@@ -26,7 +28,7 @@ func main() {
 	stateThird := state("thirdState")
 
 	//store := newMemstore()
-	store, err := newFilestore("tmp", []state{stateFirst, stateSecond, stateThird})
+	store, err := newFilestore(loggers, "tmp", []state{stateFirst, stateSecond, stateThird})
 	if err != nil {
 		log.Fatalf("cannot initialize filestore: %v", err)
 	}
@@ -41,10 +43,10 @@ func main() {
 	})
 	saga.step(stateThird, func(*message) (state, error) {
 		fmt.Printf("*** 3 handling third state completed\n")
-		return sagaEnd, nil
+		return SagaEnd, nil
 	})
 
-	machine := newMachine(saga, store)
+	machine := newMachine(saga, store, loggers)
 	go machine.Run()
 
 	var wg sync.WaitGroup

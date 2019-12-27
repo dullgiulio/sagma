@@ -16,7 +16,7 @@ type stateID struct {
 
 type handler func(msg *message) (nextState state, err error)
 
-const sagaEnd = state("__end")
+const SagaEnd = state("__end")
 
 type saga struct {
 	initial  state

@@ -58,15 +58,14 @@ func (f stateFolder) scan(state state, ids chan<- stateID, batchSize int) error 
 	}
 	defer dh.Close()
 
-	fmt.Printf("INFO: scanning %s\n", f)
-
 	for {
 		names, err := dh.Readdirnames(batchSize)
 		if err != nil && err != io.EOF {
 			return fmt.Errorf("cannot read batch of runnable folder names: %v", err)
 		}
 
-		fmt.Printf("INFO: scan of %s returned %d elements\n", f, len(names))
+		// TODO: move to statistics system
+		// fmt.Printf("INFO: scan of %s returned %d elements\n", f, len(names))
 
 		for _, name := range names {
 			ids <- stateID{state: state, id: msgID(name)}
@@ -79,6 +78,7 @@ func (f stateFolder) scan(state state, ids chan<- stateID, batchSize int) error 
 }
 
 type filestore struct {
+	log             *Loggers
 	lockmap         *msgLockMap
 	prefix          fileprefix
 	contentFilename string
@@ -86,13 +86,14 @@ type filestore struct {
 	states          []state
 }
 
-func newFilestore(prefix string, states []state) (*filestore, error) {
+func newFilestore(log *Loggers, prefix string, states []state) (*filestore, error) {
 	fprefix := fileprefix(prefix)
 	if err := fprefix.createAllFolders(stateStatuses, states); err != nil {
 		return nil, fmt.Errorf("cannot initialize file store folders: %v", err)
 	}
 
 	return &filestore{
+		log:             log,
 		prefix:          fprefix,
 		states:          states,
 		lockmap:         newMsgLockMap(),
@@ -172,7 +173,7 @@ func (f *filestore) PollRunnables(ids chan<- stateID) error {
 		folder := f.prefix.stateFolder(st, stateStatusReady)
 		go func(st state, folder stateFolder) {
 			if err := folder.scan(st, ids, 100); err != nil {
-				fmt.Printf("ERROR: cannot scan runnable for state %s: %v\n", st, err)
+				f.log.err.Printf("cannot scan runnable for state %s: %v", st, err)
 			}
 			wg.Done()
 		}(st, folder)

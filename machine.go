@@ -5,15 +5,17 @@ import (
 )
 
 type machine struct {
+	log       *Loggers
 	saga      *saga
 	store     Store
 	runnables chan stateID
 }
 
-func newMachine(saga *saga, store Store) *machine {
+func newMachine(saga *saga, store Store, log *Loggers) *machine {
 	m := &machine{
 		saga:      saga,
 		store:     store,
+		log:       log,
 		runnables: make(chan stateID), // TODO: can buffer
 	}
 	return m
@@ -37,15 +39,14 @@ func (m *machine) Run() {
 	storeDone := make(chan struct{})
 	go func() {
 		if err := m.store.PollRunnables(m.runnables); err != nil {
-			fmt.Printf("ERROR: store scanning failed: %v", err)
+			m.log.err.Printf("store scanning failed: %v", err)
 		}
 		close(storeDone)
 	}()
 	for runnable := range m.runnables {
 		if err := m.runRunnable(runnable.id, runnable.state); err != nil {
-			fmt.Printf("ERROR: runnable: %v\n", err)
+			m.log.err.Printf("runnable: %v\n", err)
 		}
-		fmt.Printf("INFO: runnable finished, polling\n")
 	}
 	<-storeDone
 }
@@ -58,9 +59,6 @@ func (m *machine) dispose(id msgID) error {
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("cannot commit transaction for end handling: %v", err)
 	}
-
-	fmt.Printf("INFO: disposing of %s\n", id)
-
 	return nil
 }
 
@@ -79,8 +77,6 @@ func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
 	if err := transaction.Commit(); err != nil {
 		return nextRunnable, fmt.Errorf("cannot commit transaction for start handling: %v", err)
 	}
-
-	fmt.Printf("INFO: handler started for %s at state %s\n", id, state)
 
 	handler, ok := m.saga.handlers[state]
 	if !ok {
@@ -101,7 +97,7 @@ func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
 			nextStateStatus stateStatus
 			err             error
 		)
-		if nextState != sagaEnd {
+		if nextState != SagaEnd {
 			if nextStateStatus, err = m.computeNextStateStatus(msg.id, nextState); err != nil {
 				return transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
 			}
@@ -124,15 +120,13 @@ func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
 		if err == nil {
 			break
 		}
-		fmt.Printf("ERROR: retying after error: %v\n", err)
+		m.log.err.Printf("retying after error: %v\n", err)
 	}
 	if err != nil {
 		return nextRunnable, fmt.Errorf("commit retry: %v", err)
 	}
 
-	fmt.Printf("INFO: handler finished for %s at state %s\n", id, state)
-
-	if nextState == sagaEnd {
+	if nextState == SagaEnd {
 		if err := m.dispose(msg.id); err != nil {
 			return nextRunnable, fmt.Errorf("cannot dispose of completed message saga for message %s: %v", msg.id, err)
 		}
@@ -149,16 +143,12 @@ func (m *machine) computeNextStateStatus(id msgID, nextState state) (stateStatus
 	}
 	switch currStateStatus {
 	case stateStatusWaiting:
-		fmt.Printf("INFO: state %s is runnable without message\n", nextState)
 		nextStateStatus = stateStatusReadyWaiting
 	case stateStatusRecvWaiting:
-		fmt.Printf("INFO: state %s is runnable\n", nextState)
 		nextStateStatus = stateStatusReady
 	default:
 		return nextStateStatus, fmt.Errorf("message %s is in unexpected state %s status %s", id, nextState, currStateStatus)
 	}
-
-	fmt.Printf("INFO: storing status %s for %s after handler\n", nextStateStatus, id)
 
 	if err = m.store.StoreStateStatus(id, nextState, currStateStatus, nextStateStatus); err != nil {
 		return nextStateStatus, fmt.Errorf("could not set state %s status %s: %v", nextState, nextStateStatus, err)
@@ -169,14 +159,10 @@ func (m *machine) computeNextStateStatus(id msgID, nextState state) (stateStatus
 func (m *machine) Receive(msg *message, state state) error {
 	transaction := m.store.Transaction(msg.id)
 
-	fmt.Printf("INFO: receive got transaction for %s\n", msg.id)
-
 	currStatus, err := m.store.FetchStateStatus(msg.id, state)
 	if err != nil {
 		return transaction.Discard(fmt.Errorf("cannot fetch status of state %s for %s: %v", state, msg.id, err))
 	}
-
-	fmt.Printf("INFO: current status of received message is %s\n", currStatus)
 
 	var nextStatus stateStatus
 	switch currStatus {
@@ -195,16 +181,12 @@ func (m *machine) Receive(msg *message, state state) error {
 		return transaction.Discard(fmt.Errorf("cannot store message at state %s: %v", state, err))
 	}
 
-	fmt.Printf("INFO: stored message for state %s, next status is %s\n", state, nextStatus)
-
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("cannot commit marking of next runnable: %v", err)
 	}
 
 	if nextStatus == stateStatusReady {
-		fmt.Printf("INFO: pushing next runnable\n")
 		m.runnables <- stateID{id: msg.id, state: state}
-		fmt.Printf("INFO: pushed next runnable\n")
 	}
 
 	return nil
