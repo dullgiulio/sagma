@@ -86,6 +86,7 @@ func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
 	if err != nil {
 		return nextRunnable, transaction.Discard(fmt.Errorf("cannot fetch message for handler: %v", err))
 	}
+	defer msg.body.Close()
 	if err := transaction.Commit(); err != nil {
 		return nextRunnable, fmt.Errorf("cannot commit transaction for start handling: %v", err)
 	}
@@ -95,7 +96,7 @@ func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
 		return nextRunnable, fmt.Errorf("state %s does not have a handler, execution finished", state)
 	}
 
-	nextState, err := handler(msg)
+	nextState, err := handler(msg.id, msg.body)
 	if err != nil {
 		return nextRunnable, fmt.Errorf("handler returned error: %v", err)
 	}

@@ -1,10 +1,20 @@
 package main
 
+import (
+	"bytes"
+	"io"
+	"io/ioutil"
+)
+
+func stringReadCloser(s string) io.ReadCloser {
+	return ioutil.NopCloser(bytes.NewReader([]byte(s)))
+}
+
 type msgID string
 
 type message struct {
 	id   msgID
-	body []byte // TODO: turn into ReadCloser
+	body io.ReadCloser
 }
 
 type state string
@@ -14,7 +24,7 @@ type stateID struct {
 	state state
 }
 
-type handler func(msg *message) (nextState state, err error)
+type handler func(id msgID, body io.Reader) (nextState state, err error)
 
 const SagaEnd = state("__end")
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"sync"
 )
@@ -32,16 +33,17 @@ func main() {
 		log.Fatalf("cannot initialize filestore: %v", err)
 	}
 
-	saga.begin(stateFirst, func(*message) (state, error) {
+	saga.begin(stateFirst, func(id msgID, body io.Reader) (state, error) {
 		fmt.Printf("*** 1 handling first state completed\n")
 		return stateSecond, nil
 	})
-	saga.step(stateSecond, func(*message) (state, error) {
+	saga.step(stateSecond, func(id msgID, body io.Reader) (state, error) {
 		fmt.Printf("*** 2 handling second state completed\n")
 		return stateThird, nil
 	})
-	saga.step(stateThird, func(*message) (state, error) {
+	saga.step(stateThird, func(id msgID, body io.Reader) (state, error) {
 		fmt.Printf("*** 3 handling third state completed\n")
+		// TODO: fetch done first and second message and concatenate all bodies to stdout
 		return SagaEnd, nil
 	})
 
@@ -53,19 +55,19 @@ func main() {
 	go func() {
 		send(&wg, machine, stateSecond, &message{
 			id:   "test",
-			body: []byte("second message"),
+			body: stringReadCloser("second message"),
 		})
 	}()
 	go func() {
 		send(&wg, machine, stateFirst, &message{
 			id:   "test",
-			body: []byte("first message"),
+			body: stringReadCloser("first message"),
 		})
 	}()
 	go func() {
 		send(&wg, machine, stateThird, &message{
 			id:   "test",
-			body: []byte("third message"),
+			body: stringReadCloser("third message"),
 		})
 	}()
 	wg.Wait()
