@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"sync"
 )
 
@@ -33,6 +34,7 @@ func main() {
 		log.Fatalf("cannot initialize filestore: %v", err)
 	}
 
+	machine := newMachine(saga, store, loggers)
 	saga.begin(stateFirst, func(id msgID, body io.Reader) (state, error) {
 		fmt.Printf("*** 1 handling first state completed\n")
 		return stateSecond, nil
@@ -41,13 +43,24 @@ func main() {
 		fmt.Printf("*** 2 handling second state completed\n")
 		return stateThird, nil
 	})
-	saga.step(stateThird, func(id msgID, body io.Reader) (state, error) {
+	saga.step(stateThird, func(id msgID, body3 io.Reader) (state, error) {
 		fmt.Printf("*** 3 handling third state completed\n")
-		// TODO: fetch done first and second message and concatenate all bodies to stdout
+		body1, err := machine.Fetch(id, stateFirst)
+		if err != nil {
+			return SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
+		}
+		defer body1.Close()
+		body2, err := machine.Fetch(id, stateFirst)
+		if err != nil {
+			return SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
+		}
+		defer body2.Close()
+		mr := io.MultiReader(body1, body2, body3)
+		if _, err := io.Copy(os.Stdout, mr); err != nil {
+			return SagaEnd, fmt.Errorf("cannot dump messages to output: %v", err)
+		}
 		return SagaEnd, nil
 	})
-
-	machine := newMachine(saga, store, loggers)
 	go machine.Run()
 
 	var wg sync.WaitGroup

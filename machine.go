@@ -87,6 +87,7 @@ func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
 	if err != nil {
 		return nextRunnable, transaction.Discard(fmt.Errorf("cannot fetch message for handler: %v", err))
 	}
+	// TODO: catch closer error
 	defer body.Close()
 	if err := transaction.Commit(); err != nil {
 		return nextRunnable, fmt.Errorf("cannot commit transaction for start handling: %v", err)
@@ -179,8 +180,14 @@ func (m *machine) Fetch(id msgID, state state) (io.ReadCloser, error) {
 }
 
 func (m *machine) Receive(id msgID, body io.ReadCloser, state state) error {
-	defer body.Close()
+	err := m.receive(id, body, state)
+	if err1 := body.Close(); err == nil {
+		err = err1
+	}
+	return err
+}
 
+func (m *machine) receive(id msgID, body io.ReadCloser, state state) error {
 	transaction := m.store.Transaction(id)
 
 	currStatus, err := m.store.FetchStateStatus(id, state)
