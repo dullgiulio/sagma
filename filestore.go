@@ -218,8 +218,6 @@ func (f *filestore) Transaction(id msgID) Transaction {
 	return newFileTX(id, f.lockmap)
 }
 
-type cleanupFn func() error
-
 type filetx struct {
 	lock    *msgLock
 	lockmap *msgLockMap

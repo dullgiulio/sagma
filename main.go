@@ -32,7 +32,7 @@ func main() {
 	stateThird := state("thirdState")
 
 	//store := newMemstore()
-	store, err := newFilestore(loggers, "tmp", []state{stateFirst, stateSecond, stateThird}, true)
+	store, err := newShardstore(loggers, "tmp", []state{stateFirst, stateSecond, stateThird}, true)
 	if err != nil {
 		log.Fatalf("cannot initialize filestore: %v", err)
 	}
