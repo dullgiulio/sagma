@@ -81,18 +81,31 @@ func (m *machine) transitionRunnable(id msgID, state state) error {
 		return fmt.Errorf("handler returned error: %v", err)
 	}
 
-	// TODO: errors in this block should be retried, we know the handler ran
-	transaction = m.store.Transaction(id)
-	if err := m.store.StoreStateStatus(id, state, stateStatusRunning, stateStatusDone); err != nil {
-		return transaction.Discard(fmt.Errorf("cannot mark handler finished: %v", err))
+	commit := func() error {
+		transaction = m.store.Transaction(id)
+		if err := m.store.StoreStateStatus(id, state, stateStatusRunning, stateStatusDone); err != nil {
+			return transaction.Discard(fmt.Errorf("cannot mark handler finished: %v", err))
+		}
+		if nextState != sagaEnd {
+			if err := m.markNextRunnable(msg.id, nextState); err != nil {
+				return transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
+			}
+		}
+		if err := transaction.Commit(); err != nil {
+			return fmt.Errorf("cannot commit transaction for end handling: %v", err)
+		}
+		return nil
 	}
-	if nextState != sagaEnd {
-		if err := m.markNextRunnable(msg.id, nextState); err != nil {
-			return transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
+
+	// errors while committing should be retried, we know the handler ran
+	for retries := 0; retries < 10; retries++ {
+		err = commit()
+		if err == nil {
+			break
 		}
 	}
-	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("cannot commit transaction for end handling: %v", err)
+	if err != nil {
+		return fmt.Errorf("commit retry: %v", err)
 	}
 
 	fmt.Printf("INFO: handler finished for %s at state %s\n", id, state)
