@@ -128,32 +128,32 @@ func (m *machine) markNextRunnable(id msgID, nextState state) error {
 	return nil
 }
 
-func (m *machine) Receive(msg *message) error {
+func (m *machine) Receive(msg *message, state state) error {
 	transaction := m.store.Transaction(msg.id)
 
-	currStatus, err := m.store.FetchStateStatus(msg.id, msg.state)
+	currStatus, err := m.store.FetchStateStatus(msg.id, state)
 	if err != nil {
-		return transaction.Discard(fmt.Errorf("cannot fetch status of state %s for %s: %v", msg.state, msg.id, err))
+		return transaction.Discard(fmt.Errorf("cannot fetch status of state %s for %s: %v", state, msg.id, err))
 	}
 
 	var nextStatus stateStatus
 	switch currStatus {
 	case stateStatusWaiting:
 		nextStatus = stateStatusRecvWaiting
-		if msg.state == m.saga.initial {
+		if state == m.saga.initial {
 			nextStatus = stateStatusReady
 		}
 	case stateStatusReadyWaiting:
 		nextStatus = stateStatusReady
 	default:
-		return transaction.Discard(fmt.Errorf("trying to store message %s at state %s in invalid status %s", msg.id, msg.state, currStatus))
+		return transaction.Discard(fmt.Errorf("trying to store message %s at state %s in invalid status %s", msg.id, state, currStatus))
 	}
 
-	if err := m.store.Store(msg, msg.state, nextStatus); err != nil {
-		return transaction.Discard(fmt.Errorf("cannot store message at state %s: %v", msg.state, err))
+	if err := m.store.Store(msg, state, nextStatus); err != nil {
+		return transaction.Discard(fmt.Errorf("cannot store message at state %s: %v", state, err))
 	}
 
-	fmt.Printf("INFO: stored message for state %s\n", msg.state)
+	fmt.Printf("INFO: stored message for state %s\n", state)
 
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("cannot commit marking of next runnable: %v", err)

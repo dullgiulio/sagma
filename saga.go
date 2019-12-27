@@ -3,9 +3,8 @@ package main
 type msgID string
 
 type message struct {
-	id    msgID
-	state state
-	body  []byte
+	id   msgID
+	body []byte // TODO: turn into ReadCloser
 }
 
 type state string

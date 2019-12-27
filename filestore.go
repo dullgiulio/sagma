@@ -162,7 +162,7 @@ func (f *filestore) Fetch(id msgID, state state, status stateStatus) (*message, 
 	if err != nil {
 		return nil, fmt.Errorf("cannot read message contents: %v", err)
 	}
-	return &message{id: id, state: state, body: body}, nil
+	return &message{id: id, body: body}, nil
 }
 
 func (f *filestore) StoreStateStatus(id msgID, st state, currStatus, nextStatus stateStatus) error {
