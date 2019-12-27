@@ -9,9 +9,12 @@ import (
 )
 
 // TODO: store impl that shards multiple filestores depending on hash of key
-// TODO: cleanup dead handlers for retry (reset started handler if not finished before deadline) for N times
-// TODO: delay before dead letter (if not runnable before deadline, notify and remove)
-// TODO: remove completed at deadline
+// TODO: external tool: cleanup dead handlers for retry (reset started handler if not finished before deadline) for N times
+//						put files in running state back in ready state after some delay
+// TODO: external tool: delay before dead letter (if not runnable before deadline, notify and remove)
+//						report files stuck in waiting statuses, move and report
+// TODO: external tool: remove completed at deadline
+//						do something with files marked as done
 
 func send(wg *sync.WaitGroup, machine *machine, state state, id msgID, body io.ReadCloser) {
 	if err := machine.Receive(id, body, state); err != nil {

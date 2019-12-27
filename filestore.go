@@ -71,7 +71,6 @@ func (f fileprefix) createAllFolders(statuses []stateStatus, states []state) err
 type stateFolder string
 
 func (f stateFolder) scan(state state, ids chan<- stateID, batchSize int) error {
-	// XXX: this will have to change if using two levels for ID in path
 	dh, err := os.Open(string(f))
 	if err != nil {
 		if os.IsNotExist(err) {
