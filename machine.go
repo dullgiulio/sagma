@@ -14,12 +14,12 @@ type machine struct {
 	finished  chan struct{}
 }
 
-func newMachine(saga *saga, store Store, log *Loggers) *machine {
+func newMachine(saga *saga, store Store, log *Loggers, runbuf int) *machine {
 	m := &machine{
 		saga:      saga,
 		store:     store,
 		log:       log,
-		runnables: make(chan stateID), // TODO: can buffer
+		runnables: make(chan stateID, runbuf),
 		shutdown:  make(chan struct{}),
 		finished:  make(chan struct{}),
 	}

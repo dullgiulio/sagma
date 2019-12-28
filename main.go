@@ -36,7 +36,7 @@ func main() {
 		log.Fatalf("cannot initialize filestore: %v", err)
 	}
 
-	machine := newMachine(saga, store, loggers)
+	machine := newMachine(saga, store, loggers, 10)
 	saga.begin(stateFirst, func(id msgID, body io.Reader) (state, error) {
 		fmt.Printf("*** 1 handling first state completed\n")
 		return stateSecond, nil
