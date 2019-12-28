@@ -52,7 +52,7 @@ func main() {
 			return SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
 		}
 		defer body1.Close()
-		body2, err := machine.Fetch(id, stateFirst)
+		body2, err := machine.Fetch(id, stateSecond)
 		if err != nil {
 			return SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
 		}
@@ -67,9 +67,9 @@ func main() {
 
 	var wg sync.WaitGroup
 	wg.Add(3)
-	go send(&wg, machine, stateSecond, "test", stringReadCloser("second message\n"))
-	go send(&wg, machine, stateFirst, "test", stringReadCloser("first message\n"))
-	go send(&wg, machine, stateThird, "test", stringReadCloser("third message\n"))
+	go send(&wg, machine, stateSecond, "test", stringReadCloser("2 second message\n"))
+	go send(&wg, machine, stateFirst, "test", stringReadCloser("1 first message\n"))
+	go send(&wg, machine, stateThird, "test", stringReadCloser("3 third message\n"))
 
 	wg.Wait()
 

@@ -131,6 +131,20 @@ func newFilestore(log *Loggers, prefix string, states []state, streamer StoreStr
 	}, nil
 }
 
+func (f *filestore) cleanWaitingStates(id msgID, state state) error {
+	folder := f.prefix.messageFolder(id, state, stateStatusRecvWaiting)
+	file := folder.contentsFile(f.contentFilename)
+	if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	folder = f.prefix.messageFolder(id, state, stateStatusReadyWaiting)
+	file = folder.contentsFile(f.contentFilename)
+	if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (f *filestore) Store(id msgID, body io.Reader, st state, status stateStatus) error {
 	folder := f.prefix.messageFolder(id, st, status)
 	if err := os.MkdirAll(string(folder), 0744); err != nil {
@@ -138,6 +152,11 @@ func (f *filestore) Store(id msgID, body io.Reader, st state, status stateStatus
 	}
 	if err := writeFile(f.streamer, folder.contentsFile(f.contentFilename), body, 0644); err != nil {
 		return fmt.Errorf("cannot write contents file: %v", err)
+	}
+	if status == stateStatusReady {
+		if err := f.cleanWaitingStates(id, st); err != nil {
+			return fmt.Errorf("cannot clean readiness marker: %v", err)
+		}
 	}
 	return nil
 }
@@ -167,6 +186,13 @@ func (f *filestore) StoreStateStatus(id msgID, st state, currStatus, nextStatus 
 		}
 		return nil
 	}
+	// TODO: if currStatus is stateStatusReadyWaiting or stateStatusRecvWaiting, try to remove lock file
+	/*
+		if currStatus == stateStatusReadyWaiting || currStatus == stateStatusRecvWaiting {
+			folder := f.prefix.messageFolder(id, st, nextStatus)
+			os.Remove(folder.contentsFile(f.contentFilename)
+		}
+	*/
 	from := f.prefix.messageFolder(id, st, currStatus)
 	to := f.prefix.messageFolder(id, st, nextStatus)
 	if err := os.Rename(string(from), string(to)); err != nil {
