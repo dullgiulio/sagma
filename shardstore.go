@@ -53,9 +53,9 @@ func (s *shardstore) FetchStateStatus(id msgID, state state) (stateStatus, error
 func (s *shardstore) PollRunnables(ids chan<- stateID) error {
 	errs := make(chan error, len(s.stores))
 	for _, store := range s.stores {
-		go func() {
+		go func(store Store) {
 			errs <- store.PollRunnables(ids)
-		}()
+		}(store)
 	}
 	var err error
 	for e := range errs {
