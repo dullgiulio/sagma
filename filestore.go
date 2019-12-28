@@ -10,9 +10,9 @@ import (
 	"sync"
 )
 
-// TODO: implement atomic file write
 func writeFile(filename string, r io.Reader, perm os.FileMode, compress bool) error {
-	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	tmpname := filename + ".tmp"
+	f, err := os.OpenFile(tmpname, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
@@ -28,6 +28,14 @@ func writeFile(filename string, r io.Reader, perm os.FileMode, compress bool) er
 	}
 	if err1 := f.Close(); err == nil {
 		err = err1
+	}
+	if err == nil {
+		if err1 := os.Rename(tmpname, filename); err1 != nil {
+			os.Remove(tmpname) // cleanup is best effort only
+			err = err1
+		}
+	} else {
+		os.Remove(tmpname)
 	}
 	return err
 }
