@@ -11,10 +11,10 @@ type shardstore struct {
 	stores map[byte]*filestore
 }
 
-func newShardstore(log *Loggers, prefix string, states []state, compress bool) (*shardstore, error) {
+func newShardstore(log *Loggers, prefix string, states []state, streamer StoreStreamer) (*shardstore, error) {
 	stores := make(map[byte]*filestore)
 	for _, c := range []byte("0123456789abcdef") {
-		fs, err := newFilestore(log, filepath.Join(prefix, string(c)), states, compress)
+		fs, err := newFilestore(log, filepath.Join(prefix, string(c)), states, streamer)
 		if err != nil {
 			return nil, fmt.Errorf("cannot initialize sharded filestore: %v", err)
 		}
