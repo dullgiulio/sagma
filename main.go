@@ -26,9 +26,9 @@ func main() {
 	loggers := NewLoggers()
 	saga := newSaga()
 
-	stateFirst := state("firstState")
-	stateSecond := state("secondState")
-	stateThird := state("thirdState")
+	stateFirst := state("first-state")
+	stateSecond := state("second-state")
+	stateThird := state("third-state")
 
 	//store := newMemstore()
 	store, err := newShardstore(loggers, "tmp", []state{stateFirst, stateSecond, stateThird}, gzipStreamer{})
@@ -63,7 +63,7 @@ func main() {
 		}
 		return SagaEnd, nil
 	})
-	go machine.Run()
+	go machine.Run(2)
 
 	var wg sync.WaitGroup
 	wg.Add(3)

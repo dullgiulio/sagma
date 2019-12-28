@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"sync"
 )
 
 type machine struct {
@@ -40,12 +41,7 @@ func (m *machine) runRunnable(id msgID, state state) error {
 	}
 }
 
-func (m *machine) Run() {
-	go func() {
-		if err := m.store.PollRunnables(m.runnables); err != nil {
-			m.log.err.Printf("store scanning failed: %v", err)
-		}
-	}()
+func (m *machine) runMachine(wg *sync.WaitGroup) {
 	for {
 		select {
 		case runnable := <-m.runnables:
@@ -53,10 +49,25 @@ func (m *machine) Run() {
 				m.log.err.Printf("runnable: %v\n", err)
 			}
 		case <-m.shutdown:
-			close(m.finished)
+			wg.Done()
 			return
 		}
 	}
+}
+
+func (m *machine) Run(n int) {
+	go func() {
+		if err := m.store.PollRunnables(m.runnables); err != nil {
+			m.log.err.Printf("store scanning failed: %v", err)
+		}
+	}()
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go m.runMachine(&wg)
+	}
+	wg.Wait()
+	close(m.finished)
 }
 
 func (m *machine) Shutdown() {
