@@ -161,6 +161,18 @@ func (f *filestore) Store(id msgID, body io.Reader, st state, status stateStatus
 	return nil
 }
 
+func (f *filestore) Fail(id msgID, st state, reason error) error {
+	folder := f.prefix.messageFolder(id, st, stateStatusError)
+	file := folder.contentsFile("error")
+	if err := os.MkdirAll(string(folder), 0744); err != nil {
+		return fmt.Errorf("cannot make message folder for failure result: %v", err)
+	}
+	if err := ioutil.WriteFile(file, []byte(reason.Error()), 0644); err != nil {
+		return fmt.Errorf("cannot write contents file failure result: %v", err)
+	}
+	return nil
+}
+
 func (f *filestore) Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error) {
 	folder := f.prefix.messageFolder(id, state, status)
 	file := folder.contentsFile(f.contentFilename)

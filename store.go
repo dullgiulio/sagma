@@ -22,6 +22,9 @@ type Store interface {
 	// Dispose or archive of all messages for this ID at all states
 	Dispose(id msgID) error
 
+	// Failure handler: should save failure state; returns handling errors
+	Fail(id msgID, state state, reason error) error
+
 	// Saves transition status for a message
 	StoreStateStatus(id msgID, state state, currStatus, nextStatus stateStatus) error
 	// Get transition state for a message

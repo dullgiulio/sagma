@@ -43,6 +43,11 @@ func (m *memstore) Store(id msgID, body io.Reader, st state, status stateStatus)
 	return nil
 }
 
+func (m *memstore) Fail(id msgID, state state, reason error) error {
+	// TODO
+	return nil
+}
+
 func (m *memstore) Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error) {
 	buf := func() []byte {
 		stateMsg, ok := m.statusStateMsg[status]

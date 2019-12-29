@@ -30,6 +30,11 @@ func (s *shardstore) Store(id msgID, body io.Reader, st state, status stateStatu
 	return store.Store(hash, body, st, status)
 }
 
+func (s *shardstore) Fail(id msgID, state state, reason error) error {
+	hash, store := s.get(id)
+	return store.Fail(hash, state, reason)
+}
+
 func (s *shardstore) Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error) {
 	hash, store := s.get(id)
 	return store.Fetch(hash, state, status)

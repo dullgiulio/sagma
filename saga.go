@@ -56,7 +56,8 @@ const (
 	stateStatusReadyWaiting stateStatus = "ready-waiting" // runnable but no message
 	stateStatusReady        stateStatus = "ready"         // both runnable and with message
 	stateStatusRunning      stateStatus = "running"       // handler running
-	stateStatusDone         stateStatus = "done"          // handler completed
+	stateStatusDone         stateStatus = "done"          // handler completed successfully
+	stateStatusError        stateStatus = "error"         // handler completed but failed
 )
 
 var stateStatuses []stateStatus = []stateStatus{
