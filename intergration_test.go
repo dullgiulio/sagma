@@ -1,32 +1,37 @@
-package main
+package sagma
 
 import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"sync"
 	"testing"
 )
 
+func stringReadCloser(s string) io.ReadCloser {
+	return ioutil.NopCloser(bytes.NewReader([]byte(s)))
+}
+
 func TestOrderMessages(t *testing.T) {
 	loggers := NewLoggers()
-	saga := newSaga()
+	saga := NewSaga()
 
-	stateFirst := state("first-state")
-	stateSecond := state("second-state")
-	//stateSecondHalf := state("second-state-half")
-	stateThird := state("third-state")
+	stateFirst := State("first-state")
+	stateSecond := State("second-state")
+	//stateSecondHalf := State("second-state-half")
+	stateThird := State("third-state")
 
-	store := newMemstore()
+	store := NewMemstore()
 
-	send := func(wg *sync.WaitGroup, machine *machine, state state, id msgID, body io.ReadCloser) {
+	send := func(wg *sync.WaitGroup, machine *Machine, state State, id MsgID, body io.ReadCloser) {
 		if err := machine.Receive(id, body, state); err != nil {
 			t.Fatalf("cannot send message: %v\n", err)
 		}
 		wg.Done()
 	}
 
-	expectedStates := make(chan state, 3) // use like a safe stack
+	expectedStates := make(chan State, 3) // use like a safe stack
 	expectedStates <- stateFirst
 	expectedStates <- stateSecond
 	expectedStates <- stateThird
@@ -34,8 +39,8 @@ func TestOrderMessages(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(6) // three steps, three sends
 
-	machine := newMachine(saga, store, loggers, 10)
-	saga.begin(stateFirst, func(id msgID, body io.Reader) (sagaStates, error) {
+	machine := NewMachine(saga, store, loggers, 10)
+	saga.Begin(stateFirst, func(id MsgID, body io.Reader) (SagaStates, error) {
 		defer wg.Done()
 
 		expectedState := <-expectedStates
@@ -43,7 +48,7 @@ func TestOrderMessages(t *testing.T) {
 			t.Fatalf("expected state is %s but got %s", expectedState, stateFirst)
 		}
 
-		return sagaNext(stateSecond), nil
+		return SagaNext(stateSecond), nil
 		//return sagaNext(stateSecond, stateSecondHalf), nil
 	})
 	/*
@@ -53,7 +58,7 @@ func TestOrderMessages(t *testing.T) {
 			return SagaEnd, nil
 		})
 	*/
-	saga.step(stateSecond, func(id msgID, body io.Reader) (sagaStates, error) {
+	saga.Step(stateSecond, func(id MsgID, body io.Reader) (SagaStates, error) {
 		defer wg.Done()
 
 		expectedState := <-expectedStates
@@ -61,9 +66,9 @@ func TestOrderMessages(t *testing.T) {
 			t.Fatalf("expected state is %s but got %s", expectedState, stateFirst)
 		}
 
-		return sagaNext(stateThird), nil
+		return SagaNext(stateThird), nil
 	})
-	saga.step(stateThird, func(id msgID, body3 io.Reader) (sagaStates, error) {
+	saga.Step(stateThird, func(id MsgID, body3 io.Reader) (SagaStates, error) {
 		defer wg.Done()
 
 		expectedState := <-expectedStates

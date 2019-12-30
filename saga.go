@@ -1,76 +1,70 @@
-package main
+package sagma
 
 import (
-	"bytes"
 	"io"
-	"io/ioutil"
 )
 
-func stringReadCloser(s string) io.ReadCloser {
-	return ioutil.NopCloser(bytes.NewReader([]byte(s)))
-}
-
-type msgID string
+type MsgID string
 
 type message struct {
-	id   msgID
+	id   MsgID
 	body io.ReadCloser
 }
 
-type state string
+type State string
 
-func (s state) IsEnd() bool {
+func (s State) IsEnd() bool {
 	return s == ""
 }
 
-type stateID struct {
-	id    msgID
-	state state
+type StateID struct {
+	id    MsgID
+	state State
 }
 
-type handler func(id msgID, body io.Reader) (nextStates sagaStates, err error)
+type Handler func(id MsgID, body io.Reader) (nextStates SagaStates, err error)
 
-type sagaStates []state
+type SagaStates []State
 
-var SagaEnd sagaStates
+var SagaEnd SagaStates
 
-func sagaNext(states ...state) sagaStates {
-	return sagaStates(append(make([]state, 0, len(states)), states...))
+func SagaNext(states ...State) SagaStates {
+	return SagaStates(append(make([]State, 0, len(states)), states...))
 }
 
-type saga struct {
-	initial  state
-	handlers map[state]handler
+type Saga struct {
+	initial  State
+	handlers map[State]Handler
 }
 
-func newSaga() *saga {
-	return &saga{
-		handlers: make(map[state]handler),
+func NewSaga() *Saga {
+	return &Saga{
+		handlers: make(map[State]Handler),
 	}
 }
 
-func (s *saga) begin(state state, handler handler) {
+func (s *Saga) Begin(state State, handler Handler) {
 	s.initial = state
-	s.step(state, handler)
+	s.Step(state, handler)
 }
 
-func (s *saga) step(state state, handler handler) {
+func (s *Saga) Step(state State, handler Handler) {
 	s.handlers[state] = handler
 }
 
-type stateStatus string
+type StateStatus string
 
 const (
-	stateStatusWaiting      stateStatus = ""              // no message yet
-	stateStatusRecvWaiting  stateStatus = "recv-waiting"  // message but not runnable
-	stateStatusReadyWaiting stateStatus = "ready-waiting" // runnable but no message
-	stateStatusReady        stateStatus = "ready"         // both runnable and with message
-	stateStatusRunning      stateStatus = "running"       // handler running
-	stateStatusDone         stateStatus = "done"          // handler completed successfully
-	stateStatusError        stateStatus = "error"         // handler completed but failed
+	stateStatusWaiting      StateStatus = ""              // no message yet
+	stateStatusRecvWaiting  StateStatus = "recv-waiting"  // message but not runnable
+	stateStatusReadyWaiting StateStatus = "ready-waiting" // runnable but no message
+	stateStatusReady        StateStatus = "ready"         // both runnable and with message
+	stateStatusRunning      StateStatus = "running"       // handler running
+	stateStatusDone         StateStatus = "done"          // handler completed successfully
+	stateStatusError        StateStatus = "error"         // handler completed but failed
 )
 
-var stateStatuses []stateStatus = []stateStatus{
+var stateStatuses []StateStatus = []StateStatus{
 	stateStatusRecvWaiting,
 	stateStatusReadyWaiting,
 	stateStatusReady,

@@ -1,4 +1,4 @@
-package main
+package sagma
 
 import (
 	"bytes"
@@ -8,28 +8,28 @@ import (
 	"sync"
 )
 
-var _ Store = newMemstore()
+var _ Store = NewMemstore()
 
-type memstore struct {
+type Memstore struct {
 	mux            sync.Mutex
-	statusStateMsg map[stateStatus]map[state]map[msgID][]byte
+	statusStateMsg map[StateStatus]map[State]map[MsgID][]byte
 }
 
-func newMemstore() *memstore {
-	return &memstore{
-		statusStateMsg: make(map[stateStatus]map[state]map[msgID][]byte),
+func NewMemstore() *Memstore {
+	return &Memstore{
+		statusStateMsg: make(map[StateStatus]map[State]map[MsgID][]byte),
 	}
 }
 
-func (m *memstore) Store(id msgID, body io.Reader, st state, status stateStatus) error {
+func (m *Memstore) Store(id MsgID, body io.Reader, st State, status StateStatus) error {
 	stateMsg, ok := m.statusStateMsg[status]
 	if !ok {
-		stateMsg = make(map[state]map[msgID][]byte)
+		stateMsg = make(map[State]map[MsgID][]byte)
 		m.statusStateMsg[status] = stateMsg
 	}
 	msgs, ok := stateMsg[st]
 	if !ok {
-		msgs = make(map[msgID][]byte)
+		msgs = make(map[MsgID][]byte)
 		stateMsg[st] = msgs
 	}
 	if _, ok = msgs[id]; ok {
@@ -43,12 +43,12 @@ func (m *memstore) Store(id msgID, body io.Reader, st state, status stateStatus)
 	return nil
 }
 
-func (m *memstore) Fail(id msgID, state state, reason error) error {
+func (m *Memstore) Fail(id MsgID, state State, reason error) error {
 	// TODO
 	return nil
 }
 
-func (m *memstore) Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error) {
+func (m *Memstore) Fetch(id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
 	buf := func() []byte {
 		stateMsg, ok := m.statusStateMsg[status]
 		if !ok {
@@ -66,7 +66,7 @@ func (m *memstore) Fetch(id msgID, state state, status stateStatus) (io.ReadClos
 	return ioutil.NopCloser(bytes.NewReader(buf)), nil
 }
 
-func (m *memstore) StoreStateStatus(id msgID, st state, currStatus, nextStatus stateStatus) error {
+func (m *Memstore) StoreStateStatus(id MsgID, st State, currStatus, nextStatus StateStatus) error {
 	removeCurrent := func() []byte {
 		stateMsg, ok := m.statusStateMsg[currStatus]
 		if !ok {
@@ -87,19 +87,19 @@ func (m *memstore) StoreStateStatus(id msgID, st state, currStatus, nextStatus s
 	msg := removeCurrent()
 	stateMsg, ok := m.statusStateMsg[nextStatus]
 	if !ok {
-		stateMsg = make(map[state]map[msgID][]byte)
+		stateMsg = make(map[State]map[MsgID][]byte)
 		m.statusStateMsg[nextStatus] = stateMsg
 	}
 	msgs, ok := stateMsg[st]
 	if !ok {
-		msgs = make(map[msgID][]byte)
+		msgs = make(map[MsgID][]byte)
 		stateMsg[st] = msgs
 	}
 	msgs[id] = msg
 	return nil
 }
 
-func (m *memstore) Dispose(id msgID) error {
+func (m *Memstore) Dispose(id MsgID) error {
 	for _, stateMsg := range m.statusStateMsg {
 		for _, msgs := range stateMsg {
 			delete(msgs, id)
@@ -108,7 +108,7 @@ func (m *memstore) Dispose(id msgID) error {
 	return nil
 }
 
-func (m *memstore) FetchStateStatus(id msgID, state state) (stateStatus, error) {
+func (m *Memstore) FetchStateStatus(id MsgID, state State) (StateStatus, error) {
 	for status, stateMsg := range m.statusStateMsg {
 		msgs, ok := stateMsg[state]
 		if !ok {
@@ -121,21 +121,21 @@ func (m *memstore) FetchStateStatus(id msgID, state state) (stateStatus, error) 
 	return stateStatusWaiting, nil
 }
 
-func (m *memstore) PollRunnables(chan<- stateID) error {
+func (m *Memstore) PollRunnables(chan<- StateID) error {
 	return nil
 }
 
-func (m *memstore) Transaction(id msgID) Transaction {
+func (m *Memstore) Transaction(id MsgID) Transaction {
 	m.mux.Lock()
 	return m
 }
 
-func (m *memstore) Commit() error {
+func (m *Memstore) Commit() error {
 	m.mux.Unlock()
 	return nil
 }
 
-func (m *memstore) Discard(err error) error {
+func (m *Memstore) Discard(err error) error {
 	m.mux.Unlock()
 	return err
 }

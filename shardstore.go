@@ -1,4 +1,4 @@
-package main
+package sagma
 
 import (
 	"crypto/sha1"
@@ -7,55 +7,55 @@ import (
 	"path/filepath"
 )
 
-type shardstore struct {
-	stores map[byte]*filestore
+type Shardstore struct {
+	stores map[byte]*Filestore
 }
 
-func newShardstore(log *Loggers, prefix string, states []state, streamer StoreStreamer) (*shardstore, error) {
-	stores := make(map[byte]*filestore)
+func NewShardstore(log *Loggers, prefix string, states []State, streamer StoreStreamer) (*Shardstore, error) {
+	stores := make(map[byte]*Filestore)
 	for _, c := range []byte("0123456789abcdef") {
-		fs, err := newFilestore(log, filepath.Join(prefix, string(c)), states, streamer)
+		fs, err := NewFilestore(log, filepath.Join(prefix, string(c)), states, streamer)
 		if err != nil {
 			return nil, fmt.Errorf("cannot initialize sharded filestore: %v", err)
 		}
 		stores[c] = fs
 	}
-	return &shardstore{
+	return &Shardstore{
 		stores: stores,
 	}, nil
 }
 
-func (s *shardstore) Store(id msgID, body io.Reader, st state, status stateStatus) error {
+func (s *Shardstore) Store(id MsgID, body io.Reader, st State, status StateStatus) error {
 	hash, store := s.get(id)
 	return store.Store(hash, body, st, status)
 }
 
-func (s *shardstore) Fail(id msgID, state state, reason error) error {
+func (s *Shardstore) Fail(id MsgID, state State, reason error) error {
 	hash, store := s.get(id)
 	return store.Fail(hash, state, reason)
 }
 
-func (s *shardstore) Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error) {
+func (s *Shardstore) Fetch(id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
 	hash, store := s.get(id)
 	return store.Fetch(hash, state, status)
 }
 
-func (s *shardstore) StoreStateStatus(id msgID, st state, currStatus, nextStatus stateStatus) error {
+func (s *Shardstore) StoreStateStatus(id MsgID, st State, currStatus, nextStatus StateStatus) error {
 	hash, store := s.get(id)
 	return store.StoreStateStatus(hash, st, currStatus, nextStatus)
 }
 
-func (s *shardstore) Dispose(id msgID) error {
+func (s *Shardstore) Dispose(id MsgID) error {
 	hash, store := s.get(id)
 	return store.Dispose(hash)
 }
 
-func (s *shardstore) FetchStateStatus(id msgID, state state) (stateStatus, error) {
+func (s *Shardstore) FetchStateStatus(id MsgID, state State) (StateStatus, error) {
 	hash, store := s.get(id)
 	return store.FetchStateStatus(hash, state)
 }
 
-func (s *shardstore) PollRunnables(ids chan<- stateID) error {
+func (s *Shardstore) PollRunnables(ids chan<- StateID) error {
 	errs := make(chan error, len(s.stores))
 	for _, store := range s.stores {
 		go func(store Store) {
@@ -71,12 +71,12 @@ func (s *shardstore) PollRunnables(ids chan<- stateID) error {
 	return err
 }
 
-func (s *shardstore) Transaction(id msgID) Transaction {
+func (s *Shardstore) Transaction(id MsgID) Transaction {
 	hash, store := s.get(id)
 	return store.Transaction(hash)
 }
 
-func (s *shardstore) get(id msgID) (msgID, Store) {
+func (s *Shardstore) get(id MsgID) (MsgID, Store) {
 	hash := fmt.Sprintf("%x", sha1.Sum([]byte(id)))
-	return msgID(hash), s.stores[hash[0]]
+	return MsgID(hash), s.stores[hash[0]]
 }

@@ -1,4 +1,4 @@
-package main
+package sagma
 
 import (
 	"fmt"
@@ -6,28 +6,28 @@ import (
 	"sync"
 )
 
-type machine struct {
+type Machine struct {
 	log       *Loggers
-	saga      *saga
+	saga      *Saga
 	store     Store
-	runnables chan stateID
+	runnables chan StateID
 	shutdown  chan struct{}
 	finished  chan struct{}
 }
 
-func newMachine(saga *saga, store Store, log *Loggers, runbuf int) *machine {
-	m := &machine{
+func NewMachine(saga *Saga, store Store, log *Loggers, runbuf int) *Machine {
+	m := &Machine{
 		saga:      saga,
 		store:     store,
 		log:       log,
-		runnables: make(chan stateID, runbuf),
+		runnables: make(chan StateID, runbuf),
 		shutdown:  make(chan struct{}),
 		finished:  make(chan struct{}),
 	}
 	return m
 }
 
-func (m *machine) runRunnable(id msgID, state state) error {
+func (m *Machine) runRunnable(id MsgID, state State) error {
 	nextRunnables, err := m.transitionRunnable(id, state)
 	if err != nil {
 		return fmt.Errorf("cannot trasition message %s at state %s: %v", id, state, err)
@@ -44,7 +44,7 @@ func (m *machine) runRunnable(id msgID, state state) error {
 	return nil
 }
 
-func (m *machine) runMachine(wg *sync.WaitGroup) {
+func (m *Machine) runMachine(wg *sync.WaitGroup) {
 	for {
 		select {
 		case runnable := <-m.runnables:
@@ -58,7 +58,7 @@ func (m *machine) runMachine(wg *sync.WaitGroup) {
 	}
 }
 
-func (m *machine) Run(n int) {
+func (m *Machine) Run(n int) {
 	go func() {
 		if err := m.store.PollRunnables(m.runnables); err != nil {
 			m.log.err.Printf("store scanning failed: %v", err)
@@ -73,12 +73,12 @@ func (m *machine) Run(n int) {
 	close(m.finished)
 }
 
-func (m *machine) Shutdown() {
+func (m *Machine) Shutdown() {
 	close(m.shutdown)
 	<-m.finished
 }
 
-func (m *machine) dispose(id msgID) error {
+func (m *Machine) dispose(id MsgID) error {
 	transaction := m.store.Transaction(id)
 	if err := m.store.Dispose(id); err != nil {
 		return transaction.Discard(fmt.Errorf("store disposal failed: %v", err))
@@ -89,7 +89,7 @@ func (m *machine) dispose(id msgID) error {
 	return nil
 }
 
-func (m *machine) commitFailure(id msgID, currState state, reason error) error {
+func (m *Machine) commitFailure(id MsgID, currState State, reason error) error {
 	transaction := m.store.Transaction(id)
 	if err := m.store.Fail(id, currState, reason); err != nil {
 		return transaction.Discard(fmt.Errorf("cannot store failure state: %v", err))
@@ -100,7 +100,7 @@ func (m *machine) commitFailure(id msgID, currState state, reason error) error {
 	return nil
 }
 
-func (m *machine) retry(n int, fn func() error) error {
+func (m *Machine) retry(n int, fn func() error) error {
 	var err error
 	for retries := 0; retries < n; retries++ {
 		err = fn()
@@ -115,8 +115,8 @@ func (m *machine) retry(n int, fn func() error) error {
 	return nil
 }
 
-func (m *machine) transitionRunnable(id msgID, state state) ([]stateID, error) {
-	var nextRunnables []stateID
+func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
+	var nextRunnables []StateID
 
 	transaction := m.store.Transaction(id)
 	// book runnable for exclusive start
@@ -166,7 +166,7 @@ func (m *machine) transitionRunnable(id msgID, state state) ([]stateID, error) {
 			}
 			// if succeeded, mark next state as ready to run if it has a message already
 			if nextStateStatus == stateStatusReady {
-				nextRunnable := stateID{
+				nextRunnable := StateID{
 					id:    id,
 					state: nextState,
 				}
@@ -190,8 +190,8 @@ func (m *machine) transitionRunnable(id msgID, state state) ([]stateID, error) {
 	return nextRunnables, nil
 }
 
-func (m *machine) computeNextStateStatus(id msgID, nextState state) (stateStatus, error) {
-	var nextStateStatus stateStatus
+func (m *Machine) computeNextStateStatus(id MsgID, nextState State) (StateStatus, error) {
+	var nextStateStatus StateStatus
 	currStateStatus, err := m.store.FetchStateStatus(id, nextState)
 	if err != nil {
 		return nextStateStatus, fmt.Errorf("cannot fetch state status: %v", err)
@@ -211,7 +211,7 @@ func (m *machine) computeNextStateStatus(id msgID, nextState state) (stateStatus
 	return nextStateStatus, nil
 }
 
-func (m *machine) Fetch(id msgID, state state) (io.ReadCloser, error) {
+func (m *Machine) Fetch(id MsgID, state State) (io.ReadCloser, error) {
 	body, err := m.store.Fetch(id, state, stateStatusDone)
 	if err != nil {
 		return nil, fmt.Errorf("cannot fetch message: %v", err)
@@ -219,7 +219,7 @@ func (m *machine) Fetch(id msgID, state state) (io.ReadCloser, error) {
 	return body, nil
 }
 
-func (m *machine) Receive(id msgID, body io.ReadCloser, state state) error {
+func (m *Machine) Receive(id MsgID, body io.ReadCloser, state State) error {
 	err := m.receive(id, body, state)
 	if err1 := body.Close(); err == nil {
 		err = err1
@@ -227,7 +227,7 @@ func (m *machine) Receive(id msgID, body io.ReadCloser, state state) error {
 	return err
 }
 
-func (m *machine) receive(id msgID, body io.ReadCloser, state state) error {
+func (m *Machine) receive(id MsgID, body io.ReadCloser, state State) error {
 	transaction := m.store.Transaction(id)
 
 	currStatus, err := m.store.FetchStateStatus(id, state)
@@ -235,7 +235,7 @@ func (m *machine) receive(id msgID, body io.ReadCloser, state state) error {
 		return transaction.Discard(fmt.Errorf("cannot fetch status of state %s for %s: %v", state, id, err))
 	}
 
-	var nextStatus stateStatus
+	var nextStatus StateStatus
 	switch currStatus {
 	case stateStatusWaiting:
 		nextStatus = stateStatusRecvWaiting
@@ -257,7 +257,7 @@ func (m *machine) receive(id msgID, body io.ReadCloser, state state) error {
 	}
 
 	if nextStatus == stateStatusReady {
-		m.runnables <- stateID{id: id, state: state}
+		m.runnables <- StateID{id: id, state: state}
 	}
 
 	return nil

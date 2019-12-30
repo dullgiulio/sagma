@@ -1,4 +1,4 @@
-package main
+package sagma
 
 import (
 	"fmt"
@@ -34,7 +34,7 @@ func writeFile(streamer StoreStreamer, filename string, r io.Reader, perm os.Fil
 	return err
 }
 
-var statusList = []stateStatus{
+var statusList = []StateStatus{
 	stateStatusRecvWaiting,
 	stateStatusReadyWaiting,
 	stateStatusReady,
@@ -50,16 +50,16 @@ func (f msgFolder) contentsFile(filename string) string {
 
 type fileprefix string
 
-func (f fileprefix) messageFolder(id msgID, state state, status stateStatus) msgFolder {
+func (f fileprefix) messageFolder(id MsgID, state State, status StateStatus) msgFolder {
 	msgid := string(id)
 	return msgFolder(filepath.Join(string(f), string(status), string(state), msgid))
 }
 
-func (f fileprefix) stateFolder(state state, status stateStatus) stateFolder {
+func (f fileprefix) stateFolder(state State, status StateStatus) stateFolder {
 	return stateFolder(filepath.Join(string(f), string(status), string(state)))
 }
 
-func (f fileprefix) createAllFolders(statuses []stateStatus, states []state) error {
+func (f fileprefix) createAllFolders(statuses []StateStatus, states []State) error {
 	for _, status := range statuses {
 		for _, state := range states {
 			if err := os.MkdirAll(string(f.stateFolder(state, status)), 0744); err != nil {
@@ -72,7 +72,7 @@ func (f fileprefix) createAllFolders(statuses []stateStatus, states []state) err
 
 type stateFolder string
 
-func (f stateFolder) scan(state state, ids chan<- stateID, batchSize int) error {
+func (f stateFolder) scan(state State, ids chan<- StateID, batchSize int) error {
 	dh, err := os.Open(string(f))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -92,7 +92,7 @@ func (f stateFolder) scan(state state, ids chan<- stateID, batchSize int) error 
 		// fmt.Printf("INFO: scan of %s returned %d elements\n", f, len(names))
 
 		for _, name := range names {
-			ids <- stateID{state: state, id: msgID(name)}
+			ids <- StateID{state: state, id: MsgID(name)}
 		}
 		if err == io.EOF {
 			break
@@ -101,19 +101,19 @@ func (f stateFolder) scan(state state, ids chan<- stateID, batchSize int) error 
 	return nil
 }
 
-type filestore struct {
+type Filestore struct {
 	log             *Loggers
 	lockmap         *msgLockMap
 	prefix          fileprefix
 	streamer        StoreStreamer
 	contentFilename string
 	wakeup          chan struct{}
-	states          []state
+	states          []State
 }
 
-func newFilestore(log *Loggers, prefix string, states []state, streamer StoreStreamer) (*filestore, error) {
+func NewFilestore(log *Loggers, prefix string, states []State, streamer StoreStreamer) (*Filestore, error) {
 	if streamer == nil {
-		streamer = nopStreamer{}
+		streamer = NopStreamer{}
 	}
 	fprefix := fileprefix(prefix)
 	if err := fprefix.createAllFolders(stateStatuses, states); err != nil {
@@ -121,7 +121,7 @@ func newFilestore(log *Loggers, prefix string, states []state, streamer StoreStr
 	}
 
 	contentFilename := streamer.Filename("contents")
-	return &filestore{
+	return &Filestore{
 		log:             log,
 		prefix:          fprefix,
 		states:          states,
@@ -131,7 +131,7 @@ func newFilestore(log *Loggers, prefix string, states []state, streamer StoreStr
 	}, nil
 }
 
-func (f *filestore) cleanWaitingStates(id msgID, state state) error {
+func (f *Filestore) cleanWaitingStates(id MsgID, state State) error {
 	folder := f.prefix.messageFolder(id, state, stateStatusRecvWaiting)
 	file := folder.contentsFile(f.contentFilename)
 	if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
@@ -145,7 +145,7 @@ func (f *filestore) cleanWaitingStates(id msgID, state state) error {
 	return nil
 }
 
-func (f *filestore) Store(id msgID, body io.Reader, st state, status stateStatus) error {
+func (f *Filestore) Store(id MsgID, body io.Reader, st State, status StateStatus) error {
 	folder := f.prefix.messageFolder(id, st, status)
 	if err := os.MkdirAll(string(folder), 0744); err != nil {
 		return fmt.Errorf("cannot make message folder: %v", err)
@@ -161,7 +161,7 @@ func (f *filestore) Store(id msgID, body io.Reader, st state, status stateStatus
 	return nil
 }
 
-func (f *filestore) Fail(id msgID, st state, reason error) error {
+func (f *Filestore) Fail(id MsgID, st State, reason error) error {
 	folder := f.prefix.messageFolder(id, st, stateStatusError)
 	file := folder.contentsFile("error")
 	if err := os.MkdirAll(string(folder), 0744); err != nil {
@@ -173,7 +173,7 @@ func (f *filestore) Fail(id msgID, st state, reason error) error {
 	return nil
 }
 
-func (f *filestore) Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error) {
+func (f *Filestore) Fetch(id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
 	folder := f.prefix.messageFolder(id, state, status)
 	file := folder.contentsFile(f.contentFilename)
 	fh, err := os.Open(file)
@@ -187,7 +187,7 @@ func (f *filestore) Fetch(id msgID, state state, status stateStatus) (io.ReadClo
 	return r, nil
 }
 
-func (f *filestore) StoreStateStatus(id msgID, st state, currStatus, nextStatus stateStatus) error {
+func (f *Filestore) StoreStateStatus(id MsgID, st State, currStatus, nextStatus StateStatus) error {
 	if currStatus == stateStatusWaiting {
 		folder := f.prefix.messageFolder(id, st, nextStatus)
 		if err := os.MkdirAll(string(folder), 0744); err != nil {
@@ -213,12 +213,12 @@ func (f *filestore) StoreStateStatus(id msgID, st state, currStatus, nextStatus 
 	return nil
 }
 
-func (f *filestore) Dispose(id msgID) error {
+func (f *Filestore) Dispose(id MsgID) error {
 	// TODO: for each state and status, if msg exists, move to archived folder
 	return nil
 }
 
-func (f *filestore) FetchStateStatus(id msgID, state state) (stateStatus, error) {
+func (f *Filestore) FetchStateStatus(id MsgID, state State) (StateStatus, error) {
 	for _, status := range statusList {
 		folder := f.prefix.messageFolder(id, state, status)
 		file := folder.contentsFile(f.contentFilename)
@@ -234,12 +234,12 @@ func (f *filestore) FetchStateStatus(id msgID, state state) (stateStatus, error)
 	return stateStatusWaiting, nil
 }
 
-func (f *filestore) PollRunnables(ids chan<- stateID) error {
+func (f *Filestore) PollRunnables(ids chan<- StateID) error {
 	var wg sync.WaitGroup
 	wg.Add(len(f.states))
 	for _, st := range f.states {
 		folder := f.prefix.stateFolder(st, stateStatusReady)
-		go func(st state, folder stateFolder) {
+		go func(st State, folder stateFolder) {
 			if err := folder.scan(st, ids, 100); err != nil {
 				f.log.err.Printf("cannot scan runnable for state %s: %v", st, err)
 			}
@@ -250,7 +250,7 @@ func (f *filestore) PollRunnables(ids chan<- stateID) error {
 	return nil
 }
 
-func (f *filestore) Transaction(id msgID) Transaction {
+func (f *Filestore) Transaction(id MsgID) Transaction {
 	return newFileTX(id, f.lockmap)
 }
 
@@ -259,7 +259,7 @@ type filetx struct {
 	lockmap *msgLockMap
 }
 
-func newFileTX(id msgID, lockmap *msgLockMap) *filetx {
+func newFileTX(id MsgID, lockmap *msgLockMap) *filetx {
 	lock := lockmap.Lock(id)
 	return &filetx{
 		lock:    lock,

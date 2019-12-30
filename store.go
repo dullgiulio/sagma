@@ -1,4 +1,4 @@
-package main
+package sagma
 
 import (
 	"io"
@@ -12,24 +12,24 @@ type Transaction interface {
 
 type Store interface {
 	// Returns an opened transaction
-	Transaction(id msgID) Transaction
+	Transaction(id MsgID) Transaction
 
 	// Store a message within a transaction; must reject duplicate messages for a state
-	Store(id msgID, body io.Reader, state state, status stateStatus) error
+	Store(id MsgID, body io.Reader, state State, status StateStatus) error
 	// Fetch message at a specific state
-	Fetch(id msgID, state state, status stateStatus) (io.ReadCloser, error)
+	Fetch(id MsgID, state State, status StateStatus) (io.ReadCloser, error)
 
 	// Dispose or archive of all messages for this ID at all states
-	Dispose(id msgID) error
+	Dispose(id MsgID) error
 
 	// Failure handler: should save failure state; returns handling errors
-	Fail(id msgID, state state, reason error) error
+	Fail(id MsgID, state State, reason error) error
 
 	// Saves transition status for a message
-	StoreStateStatus(id msgID, state state, currStatus, nextStatus stateStatus) error
+	StoreStateStatus(id MsgID, state State, currStatus, nextStatus StateStatus) error
 	// Get transition state for a message
-	FetchStateStatus(id msgID, state state) (stateStatus, error)
+	FetchStateStatus(id MsgID, state State) (StateStatus, error)
 
 	// Emits a message-state that could be ran
-	PollRunnables(chan<- stateID) error
+	PollRunnables(chan<- StateID) error
 }

@@ -1,24 +1,24 @@
-package main
+package sagma
 
 import "sync"
 
 type msgLock struct {
-	id   msgID
+	id   MsgID
 	wait chan<- struct{}
 }
 
 type msgLockMap struct {
 	mux sync.Mutex
-	ids map[msgID]chan struct{}
+	ids map[MsgID]chan struct{}
 }
 
 func newMsgLockMap() *msgLockMap {
 	return &msgLockMap{
-		ids: make(map[msgID]chan struct{}),
+		ids: make(map[MsgID]chan struct{}),
 	}
 }
 
-func (m *msgLockMap) Lock(id msgID) *msgLock {
+func (m *msgLockMap) Lock(id MsgID) *msgLock {
 	for {
 		m.mux.Lock()
 		wait, ok := m.ids[id]

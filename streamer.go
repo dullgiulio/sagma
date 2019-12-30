@@ -1,4 +1,4 @@
-package main
+package sagma
 
 import (
 	"compress/gzip"
@@ -31,31 +31,31 @@ type StoreStreamer interface {
 	Reader(r io.ReadCloser) (io.ReadCloser, error)   // modify reader
 }
 
-type nopStreamer struct{}
+type NopStreamer struct{}
 
-func (nopStreamer) Filename(filename string) string {
+func (NopStreamer) Filename(filename string) string {
 	return filename
 }
 
-func (nopStreamer) Writer(w io.WriteCloser) (io.WriteCloser, error) {
+func (NopStreamer) Writer(w io.WriteCloser) (io.WriteCloser, error) {
 	return w, nil
 }
 
-func (nopStreamer) Reader(r io.ReadCloser) (io.ReadCloser, error) {
+func (NopStreamer) Reader(r io.ReadCloser) (io.ReadCloser, error) {
 	return r, nil
 }
 
-type zlibStreamer struct{}
+type ZlibStreamer struct{}
 
-func (zlibStreamer) Filename(filename string) string {
+func (ZlibStreamer) Filename(filename string) string {
 	return filename + ".z"
 }
 
-func (zlibStreamer) Writer(w io.WriteCloser) (io.WriteCloser, error) {
+func (ZlibStreamer) Writer(w io.WriteCloser) (io.WriteCloser, error) {
 	return &closeboth{under: w, target: zlib.NewWriter(w)}, nil
 }
 
-func (zlibStreamer) Reader(r io.ReadCloser) (io.ReadCloser, error) {
+func (ZlibStreamer) Reader(r io.ReadCloser) (io.ReadCloser, error) {
 	zr, err := zlib.NewReader(r)
 	if err != nil {
 		return nil, fmt.Errorf("cannot start zlib decompressor on contents file: %v", err)
@@ -63,17 +63,17 @@ func (zlibStreamer) Reader(r io.ReadCloser) (io.ReadCloser, error) {
 	return zr, nil
 }
 
-type gzipStreamer struct{}
+type GzipStreamer struct{}
 
-func (gzipStreamer) Filename(filename string) string {
+func (GzipStreamer) Filename(filename string) string {
 	return filename + ".gz"
 }
 
-func (gzipStreamer) Writer(w io.WriteCloser) (io.WriteCloser, error) {
+func (GzipStreamer) Writer(w io.WriteCloser) (io.WriteCloser, error) {
 	return &closeboth{under: w, target: gzip.NewWriter(w)}, nil
 }
 
-func (gzipStreamer) Reader(r io.ReadCloser) (io.ReadCloser, error) {
+func (GzipStreamer) Reader(r io.ReadCloser) (io.ReadCloser, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
 		return nil, fmt.Errorf("cannot start zlib decompressor on contents file: %v", err)

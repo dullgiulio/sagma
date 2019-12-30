@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"sync"
+
+	"github.com/dullgiulio/sagma"
 )
 
 // TODO: external tool: cleanup dead handlers for retry (reset started handler if not finished before deadline) for N times
@@ -15,24 +19,28 @@ import (
 // TODO: external tool: remove completed at deadline
 //						do something with files marked as done
 
-func send(wg *sync.WaitGroup, machine *machine, state state, id msgID, body io.ReadCloser) {
+func send(wg *sync.WaitGroup, machine *sagma.Machine, state sagma.State, id sagma.MsgID, body io.ReadCloser) {
 	if err := machine.Receive(id, body, state); err != nil {
 		fmt.Printf("ERROR: cannot send message: %v\n", err)
 	}
 	wg.Done()
 }
 
+func stringReadCloser(s string) io.ReadCloser {
+	return ioutil.NopCloser(bytes.NewReader([]byte(s)))
+}
+
 func main() {
-	loggers := NewLoggers()
-	saga := newSaga()
+	loggers := sagma.NewLoggers()
+	saga := sagma.NewSaga()
 
-	stateFirst := state("first-state")
-	stateSecond := state("second-state")
-	stateSecondHalf := state("second-state-half")
-	stateThird := state("third-state")
+	stateFirst := sagma.State("first-state")
+	stateSecond := sagma.State("second-state")
+	stateSecondHalf := sagma.State("second-state-half")
+	stateThird := sagma.State("third-state")
 
-	//store := newMemstore()
-	store, err := newShardstore(loggers, "tmp", []state{stateFirst, stateSecond, stateSecondHalf, stateThird}, gzipStreamer{})
+	//store := sagma.NewMemstore()
+	store, err := sagma.NewShardstore(loggers, "tmp", []sagma.State{stateFirst, stateSecond, stateSecondHalf, stateThird}, sagma.GzipStreamer{})
 	if err != nil {
 		log.Fatalf("cannot initialize filestore: %v", err)
 	}
@@ -40,40 +48,35 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(6) // three steps, three sends
 
-	machine := newMachine(saga, store, loggers, 10)
-	saga.begin(stateFirst, func(id msgID, body io.Reader) (sagaStates, error) {
+	machine := sagma.NewMachine(saga, store, loggers, 10)
+	saga.Begin(stateFirst, func(id sagma.MsgID, body io.Reader) (sagma.SagaStates, error) {
 		defer wg.Done()
 		fmt.Printf("*** 1 handling first state completed\n")
-		return sagaNext(stateSecond, stateSecondHalf), nil
+		return sagma.SagaNext(stateSecond), nil
 	})
-	// TODO: optionally send message to complete this step
-	saga.step(stateSecondHalf, func(id msgID, body io.Reader) (sagaStates, error) {
-		fmt.Printf("*** 2-half handling second state and half completed\n")
-		return SagaEnd, nil
-	})
-	saga.step(stateSecond, func(id msgID, body io.Reader) (sagaStates, error) {
+	saga.Step(stateSecond, func(id sagma.MsgID, body io.Reader) (sagma.SagaStates, error) {
 		defer wg.Done()
 		fmt.Printf("*** 2 handling second state completed\n")
-		return sagaNext(stateThird), nil
+		return sagma.SagaNext(stateThird), nil
 	})
-	saga.step(stateThird, func(id msgID, body3 io.Reader) (sagaStates, error) {
+	saga.Step(stateThird, func(id sagma.MsgID, body3 io.Reader) (sagma.SagaStates, error) {
 		defer wg.Done()
 		fmt.Printf("*** 3 handling third state completed\n")
 		body1, err := machine.Fetch(id, stateFirst)
 		if err != nil {
-			return SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
+			return sagma.SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
 		}
 		defer body1.Close()
 		body2, err := machine.Fetch(id, stateSecond)
 		if err != nil {
-			return SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
+			return sagma.SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
 		}
 		defer body2.Close()
 		mr := io.MultiReader(body1, body2, body3)
 		if _, err := io.Copy(os.Stdout, mr); err != nil {
-			return SagaEnd, fmt.Errorf("cannot dump messages to output: %v", err)
+			return sagma.SagaEnd, fmt.Errorf("cannot dump messages to output: %v", err)
 		}
-		return SagaEnd, nil
+		return sagma.SagaEnd, nil
 	})
 	go machine.Run(2)
 
