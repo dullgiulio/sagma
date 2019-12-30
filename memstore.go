@@ -67,37 +67,35 @@ func (m *memstore) Fetch(id msgID, state state, status stateStatus) (io.ReadClos
 }
 
 func (m *memstore) StoreStateStatus(id msgID, st state, currStatus, nextStatus stateStatus) error {
-	// move from one map to the other
-	done := func() bool {
+	removeCurrent := func() []byte {
 		stateMsg, ok := m.statusStateMsg[currStatus]
 		if !ok {
-			return false
+			return nil
 		}
 		msgs, ok := stateMsg[st]
 		if !ok {
-			return false
+			return nil
 		}
 		msg, ok := msgs[id]
 		if !ok {
-			return false
+			return nil
 		}
 		delete(msgs, id)
-		stateMsg, ok = m.statusStateMsg[nextStatus]
-		if !ok {
-			stateMsg = make(map[state]map[msgID][]byte)
-			m.statusStateMsg[nextStatus] = stateMsg
-		}
-		msgs, ok = stateMsg[st]
-		if !ok {
-			msgs = make(map[msgID][]byte)
-			stateMsg[st] = msgs
-		}
-		msgs[id] = msg
-		return true
-	}()
-	if !done {
-		return fmt.Errorf("cannot change status to %s for message %s at state %s in status %s", nextStatus, id, st, currStatus)
+		return msg
 	}
+	// move from one map to the other
+	msg := removeCurrent()
+	stateMsg, ok := m.statusStateMsg[nextStatus]
+	if !ok {
+		stateMsg = make(map[state]map[msgID][]byte)
+		m.statusStateMsg[nextStatus] = stateMsg
+	}
+	msgs, ok := stateMsg[st]
+	if !ok {
+		msgs = make(map[msgID][]byte)
+		stateMsg[st] = msgs
+	}
+	msgs[id] = msg
 	return nil
 }
 
