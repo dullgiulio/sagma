@@ -30,6 +30,7 @@ steps:
 - script: |
     go version
     go get -v -t -d ./...
+    go test -v .
     go build -v .
   workingDirectory: '$(modulePath)'
   displayName: 'Get dependencies, then build'

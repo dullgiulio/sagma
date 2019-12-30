@@ -194,7 +194,7 @@ func (m *machine) computeNextStateStatus(id msgID, nextState state) (stateStatus
 	var nextStateStatus stateStatus
 	currStateStatus, err := m.store.FetchStateStatus(id, nextState)
 	if err != nil {
-		return nextStateStatus, fmt.Errorf("cannot fetch state status: %v", nextState, err)
+		return nextStateStatus, fmt.Errorf("cannot fetch state status: %v", err)
 	}
 	switch currStateStatus {
 	case stateStatusWaiting:
