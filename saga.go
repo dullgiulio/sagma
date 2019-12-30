@@ -19,14 +19,24 @@ type message struct {
 
 type state string
 
+func (s state) IsEnd() bool {
+	return s == ""
+}
+
 type stateID struct {
 	id    msgID
 	state state
 }
 
-type handler func(id msgID, body io.Reader) (nextState state, err error)
+type handler func(id msgID, body io.Reader) (nextStates sagaStates, err error)
 
-const SagaEnd = state("__end")
+type sagaStates []state
+
+var SagaEnd sagaStates
+
+func sagaNext(states ...state) sagaStates {
+	return sagaStates(append(make([]state, 0, len(states)), states...))
+}
 
 type saga struct {
 	initial  state

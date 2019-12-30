@@ -28,17 +28,20 @@ func newMachine(saga *saga, store Store, log *Loggers, runbuf int) *machine {
 }
 
 func (m *machine) runRunnable(id msgID, state state) error {
-	// run all ready states for this ID directly if possible
-	for {
-		next, err := m.transitionRunnable(id, state)
-		if err != nil {
-			return fmt.Errorf("cannot trasition message %s at state %s: %v", id, state, err)
-		}
-		if next.id == "" {
-			return nil
-		}
-		state = next.state
+	nextRunnables, err := m.transitionRunnable(id, state)
+	if err != nil {
+		return fmt.Errorf("cannot trasition message %s at state %s: %v", id, state, err)
 	}
+	// doesn't matter if this gets interrupted mid-way by shutdown: unprocessed messages will be picked up at restart
+	go func() {
+		for _, next := range nextRunnables {
+			if next.id == "" {
+				continue
+			}
+			m.runnables <- next
+		}
+	}()
+	return nil
 }
 
 func (m *machine) runMachine(wg *sync.WaitGroup) {
@@ -97,26 +100,6 @@ func (m *machine) commitFailure(id msgID, currState state, reason error) error {
 	return nil
 }
 
-func (m *machine) commitTransition(id msgID, currState, nextState state, currStatus, nextStatus stateStatus) (stateStatus, error) {
-	var (
-		nextStateStatus stateStatus
-		err             error
-	)
-	transaction := m.store.Transaction(id)
-	if err := m.store.StoreStateStatus(id, currState, currStatus, nextStatus); err != nil {
-		return nextStateStatus, transaction.Discard(fmt.Errorf("cannot mark handler finished: %v", err))
-	}
-	if nextState != SagaEnd {
-		if nextStateStatus, err = m.computeNextStateStatus(id, nextState); err != nil {
-			return nextStateStatus, transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
-		}
-	}
-	if err = transaction.Commit(); err != nil {
-		return nextStateStatus, fmt.Errorf("cannot commit transaction for end handling: %v", err)
-	}
-	return nextStateStatus, nil
-}
-
 func (m *machine) retry(n int, fn func() error) error {
 	var err error
 	for retries := 0; retries < n; retries++ {
@@ -132,65 +115,79 @@ func (m *machine) retry(n int, fn func() error) error {
 	return nil
 }
 
-func (m *machine) transitionRunnable(id msgID, state state) (stateID, error) {
-	var nextRunnable stateID
+func (m *machine) transitionRunnable(id msgID, state state) ([]stateID, error) {
+	var nextRunnables []stateID
 
 	transaction := m.store.Transaction(id)
 	// book runnable for exclusive start
 	if err := m.store.StoreStateStatus(id, state, stateStatusReady, stateStatusRunning); err != nil {
-		return nextRunnable, transaction.Discard(fmt.Errorf("cannot mark handler started: %v", err))
+		return nil, transaction.Discard(fmt.Errorf("cannot mark handler started: %v", err))
 	}
 	body, err := m.store.Fetch(id, state, stateStatusRunning)
 	if err != nil {
-		return nextRunnable, transaction.Discard(fmt.Errorf("cannot fetch message for handler: %v", err))
+		return nil, transaction.Discard(fmt.Errorf("cannot fetch message for handler: %v", err))
 	}
 	// TODO: catch closer error
 	defer body.Close()
 	if err := transaction.Commit(); err != nil {
-		return nextRunnable, fmt.Errorf("cannot commit transaction for start handling: %v", err)
+		return nil, fmt.Errorf("cannot commit transaction for start handling: %v", err)
 	}
 
 	handler, ok := m.saga.handlers[state]
 	if !ok {
-		return nextRunnable, fmt.Errorf("state %s does not have a handler, execution finished", state)
+		return nil, fmt.Errorf("state %s does not have a handler, execution finished", state)
 	}
 
-	nextState, handlerErr := handler(id, body)
+	nextStates, handlerErr := handler(id, body)
 	if handlerErr != nil {
-		// TODO: pass error and save it in store
 		commErr := m.retry(10, func() error {
 			return m.commitFailure(id, state, handlerErr)
 		})
 		if commErr != nil {
 			m.log.err.Printf("cannot commit failed handler result: %v", commErr)
 		}
-		return nextRunnable, fmt.Errorf("handler returned error: %v", handlerErr)
+		return nil, fmt.Errorf("handler returned error: %v", handlerErr)
 	}
 
 	// errors while committing should be retried, we know the handler ran
 	err = m.retry(10, func() error {
-		nextStateStatus, err := m.commitTransition(id, state, nextState, stateStatusRunning, stateStatusDone)
-		if err != nil {
-			return err
+		transaction := m.store.Transaction(id)
+		if err := m.store.StoreStateStatus(id, state, stateStatusRunning, stateStatusDone); err != nil {
+			return transaction.Discard(fmt.Errorf("cannot mark handler finished: %v", err))
 		}
-		// if succeeded, mark next state as ready to run if it has a message already
-		if nextStateStatus == stateStatusReady {
-			nextRunnable.id = id
-			nextRunnable.state = nextState
+		for _, nextState := range nextStates {
+			if nextState.IsEnd() {
+				continue
+			}
+
+			nextStateStatus, err := m.computeNextStateStatus(id, nextState)
+			if err != nil {
+				return transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
+			}
+			// if succeeded, mark next state as ready to run if it has a message already
+			if nextStateStatus == stateStatusReady {
+				nextRunnable := stateID{
+					id:    id,
+					state: nextState,
+				}
+				nextRunnables = append(nextRunnables, nextRunnable)
+			}
+		}
+		if err = transaction.Commit(); err != nil {
+			return fmt.Errorf("cannot commit transaction for end handling: %v", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return nextRunnable, fmt.Errorf("commit retry: %v", err)
+		return nil, fmt.Errorf("commit retry: %v", err)
 	}
-
-	if nextState == SagaEnd {
+	// TODO: move this; dispose should be called when all states returned END as next
+	/*
 		if err := m.dispose(id); err != nil {
-			return nextRunnable, fmt.Errorf("cannot dispose of completed message saga for message %s: %v", id, err)
+			return nil, fmt.Errorf("cannot dispose of completed message saga for message %s: %v", id, err)
 		}
-	}
-
-	return nextRunnable, nil
+	*/
+	return nextRunnables, nil
 }
 
 func (m *machine) computeNextStateStatus(id msgID, nextState state) (stateStatus, error) {

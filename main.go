@@ -28,24 +28,36 @@ func main() {
 
 	stateFirst := state("first-state")
 	stateSecond := state("second-state")
+	stateSecondHalf := state("second-state-half")
 	stateThird := state("third-state")
 
 	//store := newMemstore()
-	store, err := newShardstore(loggers, "tmp", []state{stateFirst, stateSecond, stateThird}, gzipStreamer{})
+	store, err := newShardstore(loggers, "tmp", []state{stateFirst, stateSecond, stateSecondHalf, stateThird}, gzipStreamer{})
 	if err != nil {
 		log.Fatalf("cannot initialize filestore: %v", err)
 	}
 
+	var wg sync.WaitGroup
+	wg.Add(6) // three steps, three sends
+
 	machine := newMachine(saga, store, loggers, 10)
-	saga.begin(stateFirst, func(id msgID, body io.Reader) (state, error) {
+	saga.begin(stateFirst, func(id msgID, body io.Reader) (sagaStates, error) {
+		defer wg.Done()
 		fmt.Printf("*** 1 handling first state completed\n")
-		return stateSecond, nil
+		return sagaNext(stateSecond, stateSecondHalf), nil
 	})
-	saga.step(stateSecond, func(id msgID, body io.Reader) (state, error) {
+	// TODO: optionally send message to complete this step
+	saga.step(stateSecondHalf, func(id msgID, body io.Reader) (sagaStates, error) {
+		fmt.Printf("*** 2-half handling second state and half completed\n")
+		return SagaEnd, nil
+	})
+	saga.step(stateSecond, func(id msgID, body io.Reader) (sagaStates, error) {
+		defer wg.Done()
 		fmt.Printf("*** 2 handling second state completed\n")
-		return stateThird, nil
+		return sagaNext(stateThird), nil
 	})
-	saga.step(stateThird, func(id msgID, body3 io.Reader) (state, error) {
+	saga.step(stateThird, func(id msgID, body3 io.Reader) (sagaStates, error) {
+		defer wg.Done()
 		fmt.Printf("*** 3 handling third state completed\n")
 		body1, err := machine.Fetch(id, stateFirst)
 		if err != nil {
@@ -65,8 +77,6 @@ func main() {
 	})
 	go machine.Run(2)
 
-	var wg sync.WaitGroup
-	wg.Add(3)
 	go send(&wg, machine, stateSecond, "test", stringReadCloser("2 second message\n"))
 	go send(&wg, machine, stateFirst, "test", stringReadCloser("1 first message\n"))
 	go send(&wg, machine, stateThird, "test", stringReadCloser("3 third message\n"))
