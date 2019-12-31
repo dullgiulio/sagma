@@ -2,15 +2,14 @@ package sagma
 
 import (
 	"log"
-	"os"
 )
 
 type Loggers struct {
 	err *log.Logger
 }
 
-func NewLoggers() *Loggers {
+func NewLoggers(err *log.Logger) *Loggers {
 	return &Loggers{
-		err: log.New(os.Stderr, "error - ", log.LstdFlags),
+		err: err,
 	}
 }
