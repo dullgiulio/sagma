@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
+	"os"
 	"sync"
 	"testing"
 )
@@ -14,7 +16,7 @@ func stringReadCloser(s string) io.ReadCloser {
 }
 
 func TestOrderMessages(t *testing.T) {
-	loggers := NewLoggers()
+	loggers := NewLoggers(log.New(os.Stdout, "error - ", log.LstdFlags))
 	saga := NewSaga()
 
 	stateFirst := State("first-state")

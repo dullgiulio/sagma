@@ -17,6 +17,7 @@ variables:
 
 steps:
 - script: |
+    set -e
     mkdir -p '$(GOBIN)'
     mkdir -p '$(GOPATH)/pkg'
     mkdir -p '$(modulePath)'
@@ -28,6 +29,7 @@ steps:
   displayName: 'Set up the Go workspace'
 
 - script: |
+    set -e
     go version
     go get -v -t -d ./...
     go test -v .
