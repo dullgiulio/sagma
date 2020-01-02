@@ -1,6 +1,7 @@
 package sagma
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -169,6 +170,44 @@ func (f *Filestore) Fail(id MsgID, st State, reason error) error {
 	}
 	if err := ioutil.WriteFile(file, []byte(reason.Error()), 0644); err != nil {
 		return fmt.Errorf("cannot write contents file failure result: %v", err)
+	}
+	return nil
+}
+
+func (f *Filestore) FetchStates(id MsgID, visitor MessageVisitor) error {
+	stat := func(fname string) (bool, error) {
+		_, err := os.Stat(fname)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	}
+	for _, status := range statusList {
+		for _, state := range f.states {
+			folder := f.prefix.messageFolder(id, state, status)
+			exists, err := stat(folder.contentsFile(f.contentFilename))
+			if err != nil {
+				return fmt.Errorf("cannot stat message file to get statuses: %v", err)
+			}
+			if exists {
+				if err := visitor.Visit(id, state, status); err != nil {
+					return err
+				}
+			}
+			contents, err := ioutil.ReadFile(folder.contentsFile("error"))
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return fmt.Errorf("cannot read error file: %v", err)
+			}
+			if err := visitor.Failed(id, state, errors.New(string(contents))); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

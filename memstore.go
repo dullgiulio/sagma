@@ -48,6 +48,17 @@ func (m *Memstore) Fail(id MsgID, state State, reason error) error {
 	return nil
 }
 
+func (m *Memstore) FetchStates(id MsgID, visitor MessageVisitor) error {
+	for status, stateMsg := range m.statusStateMsg {
+		for state, msgs := range stateMsg {
+			if _, ok := msgs[id]; ok {
+				visitor.Visit(id, state, status)
+			}
+		}
+	}
+	return nil
+}
+
 func (m *Memstore) Fetch(id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
 	buf := func() []byte {
 		stateMsg, ok := m.statusStateMsg[status]

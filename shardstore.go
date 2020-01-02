@@ -35,6 +35,11 @@ func (s *Shardstore) Fail(id MsgID, state State, reason error) error {
 	return store.Fail(hash, state, reason)
 }
 
+func (s *Shardstore) FetchStates(id MsgID, visitor MessageVisitor) error {
+	hash, store := s.get(id)
+	return store.FetchStates(hash, visitor)
+}
+
 func (s *Shardstore) Fetch(id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
 	hash, store := s.get(id)
 	return store.Fetch(hash, state, status)

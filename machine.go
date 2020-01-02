@@ -211,10 +211,25 @@ func (m *Machine) computeNextStateStatus(id MsgID, nextState State) (StateStatus
 	return nextStateStatus, nil
 }
 
+func (m *Machine) FetchStates(id MsgID, visitor MessageVisitor) error {
+	transaction := m.store.Transaction(id)
+	if err := m.store.FetchStates(id, visitor); err != nil {
+		return transaction.Discard(fmt.Errorf("cannot fetch states of %s: %v", id, err))
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("cannot close read-only transaction: %v", err)
+	}
+	return nil
+}
+
 func (m *Machine) Fetch(id MsgID, state State) (io.ReadCloser, error) {
+	transaction := m.store.Transaction(id)
 	body, err := m.store.Fetch(id, state, stateStatusDone)
 	if err != nil {
-		return nil, fmt.Errorf("cannot fetch message: %v", err)
+		return nil, transaction.Discard(fmt.Errorf("cannot fetch message: %v", err))
+	}
+	if err := transaction.Commit(); err != nil {
+		return nil, fmt.Errorf("cannot close read-only transaction: %v", err)
 	}
 	return body, nil
 }

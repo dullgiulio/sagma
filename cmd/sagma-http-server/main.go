@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -135,13 +136,65 @@ func httpErrorCode(err error) int {
 	}
 }
 
+type messageStateStatuses map[sagma.State]interface{}
+
+func (m messageStateStatuses) Visit(id sagma.MsgID, state sagma.State, status sagma.StateStatus) error {
+	stmap := make(map[string]string)
+	stmap["state"] = string(state)
+	stmap["status"] = string(status)
+	m[state] = stmap
+	return nil
+}
+
+func (m messageStateStatuses) Failed(id sagma.MsgID, state sagma.State, failed error) error {
+	errmap := make(map[string]interface{})
+	errmap["state"] = string(state)
+	errmap["failed"] = true
+	errmap["error"] = failed.Error()
+	m[state] = errmap
+	return nil
+}
+
+func stateHandler(machine *sagma.Machine, states []sagma.State) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := sagma.MsgID(vars["messageID"])
+		mstates := messageStateStatuses(make(map[sagma.State]interface{}))
+		if err := machine.FetchStates(id, mstates); err != nil {
+			elog.Printf("cannot fetch message %s states: %v", id, err)
+			http.Error(w, err.Error(), httpErrorCode(err))
+			return
+		}
+		statuses := make([]interface{}, len(states))
+		i := 0
+		for _, state := range states {
+			status, ok := mstates[state]
+			if ok {
+				statuses[i] = status
+			} else {
+				unknown := make(map[string]interface{})
+				unknown["state"] = string(state)
+				unknown["pending"] = true
+				statuses[i] = unknown
+			}
+			i++
+		}
+		enc := json.NewEncoder(w)
+		if err := enc.Encode(statuses); err != nil {
+			elog.Printf("cannot encode respose into JSON: %v", err)
+			return
+		}
+		dlog.Printf("request for states of %s completed", id)
+	}
+}
+
 func fetchHandler(machine *sagma.Machine, state sagma.State) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		id := sagma.MsgID(vars["messageID"])
 		body, err := machine.Fetch(id, state)
 		if err != nil {
-			elog.Printf("cannot fetch message: %v", err)
+			elog.Printf("cannot fetch message %s: %v", id, err)
 			http.Error(w, err.Error(), httpErrorCode(err))
 			return
 		}
@@ -246,6 +299,7 @@ func main() {
 
 	router := mux.NewRouter()
 	router.HandleFunc("/health", healthzHandler)
+	router.HandleFunc("/messages/{messageID}/status", stateHandler(machine, states))
 	for _, state := range states {
 		path := "/step/" + string(state) + "/messages/{messageID}"
 		dlog.Printf("registering %s", path)
