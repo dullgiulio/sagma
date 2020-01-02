@@ -209,15 +209,14 @@ func main() {
 
 	machine := sagma.NewMachine(saga, store, loggers, 10)
 	saga.Begin(stateFirst, func(id sagma.MsgID, body io.Reader) (sagma.SagaStates, error) {
-		dlog.Printf("*** 1 handling first state completed\n")
+		dlog.Printf("*** 1 handling first state completed for %s\n", id)
 		return sagma.SagaNext(stateSecond), nil
 	})
 	saga.Step(stateSecond, func(id sagma.MsgID, body io.Reader) (sagma.SagaStates, error) {
-		dlog.Printf("*** 2 handling second state completed\n")
+		dlog.Printf("*** 2 handling second state completed for %s\n", id)
 		return sagma.SagaNext(stateThird), nil
 	})
 	saga.Step(stateThird, func(id sagma.MsgID, body3 io.Reader) (sagma.SagaStates, error) {
-		dlog.Printf("*** 3 handling third state completed\n")
 		body1, err := machine.Fetch(id, stateFirst)
 		if err != nil {
 			return sagma.SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
@@ -232,6 +231,7 @@ func main() {
 		if _, err := io.Copy(os.Stdout, mr); err != nil {
 			return sagma.SagaEnd, fmt.Errorf("cannot dump messages to output: %v", err)
 		}
+		dlog.Printf("*** 3 handling third state completed %s\n", id)
 		return sagma.SagaEnd, nil
 	})
 	go machine.Run(*workers)
