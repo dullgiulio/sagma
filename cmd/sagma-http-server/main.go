@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -12,6 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+
+	"github.com/gorilla/mux"
 
 	"github.com/dullgiulio/sagma"
 )
@@ -125,14 +126,36 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func send(machine *sagma.Machine, state sagma.State, id sagma.MsgID, body io.ReadCloser) {
-	if err := machine.Receive(id, body, state); err != nil {
-		elog.Printf("cannot send message: %v\n", err)
+func fetchHandler(machine *sagma.Machine, state sagma.State) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := sagma.MsgID(vars["messageID"])
+		body, err := machine.Fetch(id, state)
+		if err != nil {
+			elog.Printf("cannot fetch message: %v", err)
+			http.Error(w, err.Error(), 500) // TODO: 404 for unknown message IDs, etc...
+			return
+		}
+		defer body.Close()
+		if _, err := io.Copy(w, body); err != nil {
+			elog.Printf("cannot copy body to response: %v", err)
+			return
+		}
+		dlog.Printf("request for %s completed", id)
 	}
 }
 
-func stringReadCloser(s string) io.ReadCloser {
-	return ioutil.NopCloser(bytes.NewReader([]byte(s)))
+func sendHandler(machine *sagma.Machine, state sagma.State) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := sagma.MsgID(vars["messageID"])
+		defer r.Body.Close()
+		if err := machine.Receive(id, r.Body, state); err != nil {
+			elog.Printf("cannot send message: %v\n", err)
+			http.Error(w, err.Error(), 500) // TODO: 404 for unknown message IDs, etc...
+			return
+		}
+	}
 }
 
 func main() {
@@ -143,9 +166,12 @@ func main() {
 	workers := flag.Int("workers", 10, "Number of state machine workers to run")
 	filesRoot := flag.String("files-root", "", "Root folder for files storage")
 	listen := flag.String("listen", ":8080", "IP:PORT to listen to for HTTP")
+	debug := flag.Bool("debug", false, "Print more verbose logging")
 
 	flag.VisitAll(prefixEnv("SAGMA_HTTP", os.Getenv))
 	flag.Parse()
+
+	initLogging(*debug)
 
 	loggers := sagma.NewLoggers(elog)
 	saga := sagma.NewSaga()
@@ -201,10 +227,6 @@ func main() {
 	})
 	go machine.Run(*workers)
 
-	//go send(&wg, machine, stateSecond, "test", stringReadCloser("2 second message\n"))
-	//go send(&wg, machine, stateFirst, "test", stringReadCloser("1 first message\n"))
-	//go send(&wg, machine, stateThird, "test", stringReadCloser("3 third message\n"))
-
 	server := &http.Server{Addr: *listen}
 	exited := handleSigterm(func() {
 		if err := server.Shutdown(context.Background()); err != nil {
@@ -213,11 +235,20 @@ func main() {
 		machine.Shutdown()
 	})
 
+	router := mux.NewRouter()
+	router.HandleFunc("/health", healthzHandler)
+	for _, state := range states {
+		path := "/step/" + string(state) + "/messages/{messageID}"
+		dlog.Printf("registering %s", path)
+		router.HandleFunc(path, sendHandler(machine, state)).Methods("PUT")
+		router.HandleFunc(path, fetchHandler(machine, state)).Methods("GET")
+	}
+
 	// TODO http.Handle("/metrics", metrics.handler())
-	http.HandleFunc("/health", healthzHandler)
 	// PUT /step/:stepName/messages/:messageID
+	// GET /step/:stepName/messages/:messageID
 	// GET /messages/:messageID/status -> returns full state:status map for message
-	// GET /messages/:messageID -> contents of message
+	http.Handle("/", router)
 
 	ilog.Printf("listening on %s", *listen)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
