@@ -237,13 +237,6 @@ func (f *Filestore) StoreStateStatus(id MsgID, st State, currStatus, nextStatus 
 		}
 		return nil
 	}
-	// TODO: if currStatus is stateStatusReadyWaiting or stateStatusRecvWaiting, try to remove lock file
-	/*
-		if currStatus == stateStatusReadyWaiting || currStatus == stateStatusRecvWaiting {
-			folder := f.prefix.messageFolder(id, st, nextStatus)
-			os.Remove(folder.contentsFile(f.contentFilename)
-		}
-	*/
 	from := f.prefix.messageFolder(id, st, currStatus)
 	to := f.prefix.messageFolder(id, st, nextStatus)
 	if err := os.Rename(string(from), string(to)); err != nil {
