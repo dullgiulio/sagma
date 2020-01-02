@@ -33,3 +33,5 @@ type Store interface {
 	// Emits a message-state that could be ran
 	PollRunnables(chan<- StateID) error
 }
+
+type NotFoundError error

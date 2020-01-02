@@ -61,7 +61,7 @@ func (m *Memstore) Fetch(id MsgID, state State, status StateStatus) (io.ReadClos
 		return msgs[id]
 	}()
 	if buf == nil {
-		return nil, fmt.Errorf("message %s not found at state %s in status %s", id, state, status)
+		return nil, NotFoundError(fmt.Errorf("message %s not found at state %s in status %s", id, state, status))
 	}
 	return ioutil.NopCloser(bytes.NewReader(buf)), nil
 }

@@ -178,7 +178,7 @@ func (f *Filestore) Fetch(id MsgID, state State, status StateStatus) (io.ReadClo
 	file := folder.contentsFile(f.contentFilename)
 	fh, err := os.Open(file)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read message contents: %v", err)
+		return nil, NotFoundError(fmt.Errorf("cannot read message contents: %v", err))
 	}
 	r, err := f.streamer.Reader(fh)
 	if err != nil {

@@ -126,6 +126,15 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
+func httpErrorCode(err error) int {
+	switch err.(type) {
+	case sagma.NotFoundError:
+		return http.StatusNotFound
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 func fetchHandler(machine *sagma.Machine, state sagma.State) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -133,7 +142,7 @@ func fetchHandler(machine *sagma.Machine, state sagma.State) func(w http.Respons
 		body, err := machine.Fetch(id, state)
 		if err != nil {
 			elog.Printf("cannot fetch message: %v", err)
-			http.Error(w, err.Error(), 500) // TODO: 404 for unknown message IDs, etc...
+			http.Error(w, err.Error(), httpErrorCode(err))
 			return
 		}
 		defer body.Close()
@@ -151,8 +160,8 @@ func sendHandler(machine *sagma.Machine, state sagma.State) func(w http.Response
 		id := sagma.MsgID(vars["messageID"])
 		defer r.Body.Close()
 		if err := machine.Receive(id, r.Body, state); err != nil {
-			elog.Printf("cannot send message: %v\n", err)
-			http.Error(w, err.Error(), 500) // TODO: 404 for unknown message IDs, etc...
+			elog.Printf("cannot put message: %v\n", err)
+			http.Error(w, err.Error(), httpErrorCode(err))
 			return
 		}
 	}
