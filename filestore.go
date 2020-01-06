@@ -146,7 +146,7 @@ func (f *Filestore) cleanWaitingStates(id MsgID, state State) error {
 	return nil
 }
 
-func (f *Filestore) Store(id MsgID, body io.Reader, st State, status StateStatus) error {
+func (f *Filestore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus) error {
 	folder := f.prefix.messageFolder(id, st, status)
 	if err := os.MkdirAll(string(folder), 0744); err != nil {
 		return fmt.Errorf("cannot make message folder: %v", err)
@@ -162,7 +162,7 @@ func (f *Filestore) Store(id MsgID, body io.Reader, st State, status StateStatus
 	return nil
 }
 
-func (f *Filestore) Fail(id MsgID, st State, reason error) error {
+func (f *Filestore) Fail(tx Transaction, id MsgID, st State, reason error) error {
 	folder := f.prefix.messageFolder(id, st, stateStatusError)
 	file := folder.contentsFile("error")
 	if err := os.MkdirAll(string(folder), 0744); err != nil {
@@ -174,7 +174,7 @@ func (f *Filestore) Fail(id MsgID, st State, reason error) error {
 	return nil
 }
 
-func (f *Filestore) FetchStates(id MsgID, visitor MessageVisitor) error {
+func (f *Filestore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor) error {
 	stat := func(fname string) (bool, error) {
 		_, err := os.Stat(fname)
 		if err != nil {
@@ -212,7 +212,7 @@ func (f *Filestore) FetchStates(id MsgID, visitor MessageVisitor) error {
 	return nil
 }
 
-func (f *Filestore) Fetch(id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
+func (f *Filestore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
 	folder := f.prefix.messageFolder(id, state, status)
 	file := folder.contentsFile(f.contentFilename)
 	fh, err := os.Open(file)
@@ -226,7 +226,7 @@ func (f *Filestore) Fetch(id MsgID, state State, status StateStatus) (io.ReadClo
 	return r, nil
 }
 
-func (f *Filestore) StoreStateStatus(id MsgID, st State, currStatus, nextStatus StateStatus) error {
+func (f *Filestore) StoreStateStatus(tx Transaction, id MsgID, st State, currStatus, nextStatus StateStatus) error {
 	if currStatus == stateStatusWaiting {
 		folder := f.prefix.messageFolder(id, st, nextStatus)
 		if err := os.MkdirAll(string(folder), 0744); err != nil {
@@ -245,12 +245,12 @@ func (f *Filestore) StoreStateStatus(id MsgID, st State, currStatus, nextStatus 
 	return nil
 }
 
-func (f *Filestore) Dispose(id MsgID) error {
+func (f *Filestore) Dispose(tx Transaction, id MsgID) error {
 	// TODO: for each state and status, if msg exists, move to archived folder
 	return nil
 }
 
-func (f *Filestore) FetchStateStatus(id MsgID, state State) (StateStatus, error) {
+func (f *Filestore) FetchStateStatus(tx Transaction, id MsgID, state State) (StateStatus, error) {
 	for _, status := range statusList {
 		folder := f.prefix.messageFolder(id, state, status)
 		file := folder.contentsFile(f.contentFilename)
@@ -282,8 +282,8 @@ func (f *Filestore) PollRunnables(ids chan<- StateID) error {
 	return nil
 }
 
-func (f *Filestore) Transaction(id MsgID) Transaction {
-	return newFileTX(id, f.lockmap)
+func (f *Filestore) Transaction(id MsgID) (Transaction, error) {
+	return newFileTX(id, f.lockmap), nil
 }
 
 type filetx struct {

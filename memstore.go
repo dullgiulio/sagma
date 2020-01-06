@@ -21,7 +21,7 @@ func NewMemstore() *Memstore {
 	}
 }
 
-func (m *Memstore) Store(id MsgID, body io.Reader, st State, status StateStatus) error {
+func (m *Memstore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus) error {
 	stateMsg, ok := m.statusStateMsg[status]
 	if !ok {
 		stateMsg = make(map[State]map[MsgID][]byte)
@@ -43,12 +43,12 @@ func (m *Memstore) Store(id MsgID, body io.Reader, st State, status StateStatus)
 	return nil
 }
 
-func (m *Memstore) Fail(id MsgID, state State, reason error) error {
+func (m *Memstore) Fail(tx Transaction, id MsgID, state State, reason error) error {
 	// TODO
 	return nil
 }
 
-func (m *Memstore) FetchStates(id MsgID, visitor MessageVisitor) error {
+func (m *Memstore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor) error {
 	for status, stateMsg := range m.statusStateMsg {
 		for state, msgs := range stateMsg {
 			if _, ok := msgs[id]; ok {
@@ -59,7 +59,7 @@ func (m *Memstore) FetchStates(id MsgID, visitor MessageVisitor) error {
 	return nil
 }
 
-func (m *Memstore) Fetch(id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
+func (m *Memstore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
 	buf := func() []byte {
 		stateMsg, ok := m.statusStateMsg[status]
 		if !ok {
@@ -77,7 +77,7 @@ func (m *Memstore) Fetch(id MsgID, state State, status StateStatus) (io.ReadClos
 	return ioutil.NopCloser(bytes.NewReader(buf)), nil
 }
 
-func (m *Memstore) StoreStateStatus(id MsgID, st State, currStatus, nextStatus StateStatus) error {
+func (m *Memstore) StoreStateStatus(tx Transaction, id MsgID, st State, currStatus, nextStatus StateStatus) error {
 	removeCurrent := func() []byte {
 		stateMsg, ok := m.statusStateMsg[currStatus]
 		if !ok {
@@ -110,7 +110,7 @@ func (m *Memstore) StoreStateStatus(id MsgID, st State, currStatus, nextStatus S
 	return nil
 }
 
-func (m *Memstore) Dispose(id MsgID) error {
+func (m *Memstore) Dispose(tx Transaction, id MsgID) error {
 	for _, stateMsg := range m.statusStateMsg {
 		for _, msgs := range stateMsg {
 			delete(msgs, id)
@@ -119,7 +119,7 @@ func (m *Memstore) Dispose(id MsgID) error {
 	return nil
 }
 
-func (m *Memstore) FetchStateStatus(id MsgID, state State) (StateStatus, error) {
+func (m *Memstore) FetchStateStatus(tx Transaction, id MsgID, state State) (StateStatus, error) {
 	for status, stateMsg := range m.statusStateMsg {
 		msgs, ok := stateMsg[state]
 		if !ok {
@@ -136,9 +136,9 @@ func (m *Memstore) PollRunnables(chan<- StateID) error {
 	return nil
 }
 
-func (m *Memstore) Transaction(id MsgID) Transaction {
+func (m *Memstore) Transaction(id MsgID) (Transaction, error) {
 	m.mux.Lock()
-	return m
+	return m, nil
 }
 
 func (m *Memstore) Commit() error {

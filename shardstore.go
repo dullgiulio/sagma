@@ -25,39 +25,39 @@ func NewShardstore(log *Loggers, prefix string, states []State, streamer StoreSt
 	}, nil
 }
 
-func (s *Shardstore) Store(id MsgID, body io.Reader, st State, status StateStatus) error {
+func (s *Shardstore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus) error {
 	hash, store := s.get(id)
-	return store.Store(hash, body, st, status)
+	return store.Store(tx, hash, body, st, status)
 }
 
-func (s *Shardstore) Fail(id MsgID, state State, reason error) error {
+func (s *Shardstore) Fail(tx Transaction, id MsgID, state State, reason error) error {
 	hash, store := s.get(id)
-	return store.Fail(hash, state, reason)
+	return store.Fail(tx, hash, state, reason)
 }
 
-func (s *Shardstore) FetchStates(id MsgID, visitor MessageVisitor) error {
+func (s *Shardstore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor) error {
 	hash, store := s.get(id)
-	return store.FetchStates(hash, visitor)
+	return store.FetchStates(tx, hash, visitor)
 }
 
-func (s *Shardstore) Fetch(id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
+func (s *Shardstore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
 	hash, store := s.get(id)
-	return store.Fetch(hash, state, status)
+	return store.Fetch(tx, hash, state, status)
 }
 
-func (s *Shardstore) StoreStateStatus(id MsgID, st State, currStatus, nextStatus StateStatus) error {
+func (s *Shardstore) StoreStateStatus(tx Transaction, id MsgID, st State, currStatus, nextStatus StateStatus) error {
 	hash, store := s.get(id)
-	return store.StoreStateStatus(hash, st, currStatus, nextStatus)
+	return store.StoreStateStatus(tx, hash, st, currStatus, nextStatus)
 }
 
-func (s *Shardstore) Dispose(id MsgID) error {
+func (s *Shardstore) Dispose(tx Transaction, id MsgID) error {
 	hash, store := s.get(id)
-	return store.Dispose(hash)
+	return store.Dispose(tx, hash)
 }
 
-func (s *Shardstore) FetchStateStatus(id MsgID, state State) (StateStatus, error) {
+func (s *Shardstore) FetchStateStatus(tx Transaction, id MsgID, state State) (StateStatus, error) {
 	hash, store := s.get(id)
-	return store.FetchStateStatus(hash, state)
+	return store.FetchStateStatus(tx, hash, state)
 }
 
 func (s *Shardstore) PollRunnables(ids chan<- StateID) error {
@@ -76,7 +76,7 @@ func (s *Shardstore) PollRunnables(ids chan<- StateID) error {
 	return err
 }
 
-func (s *Shardstore) Transaction(id MsgID) Transaction {
+func (s *Shardstore) Transaction(id MsgID) (Transaction, error) {
 	hash, store := s.get(id)
 	return store.Transaction(hash)
 }

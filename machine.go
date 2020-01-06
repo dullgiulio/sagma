@@ -79,8 +79,11 @@ func (m *Machine) Shutdown() {
 }
 
 func (m *Machine) dispose(id MsgID) error {
-	transaction := m.store.Transaction(id)
-	if err := m.store.Dispose(id); err != nil {
+	transaction, err := m.store.Transaction(id)
+	if err != nil {
+		return fmt.Errorf("cannot open dispose transaction: %v", err)
+	}
+	if err := m.store.Dispose(transaction, id); err != nil {
 		return transaction.Discard(fmt.Errorf("store disposal failed: %v", err))
 	}
 	if err := transaction.Commit(); err != nil {
@@ -90,8 +93,11 @@ func (m *Machine) dispose(id MsgID) error {
 }
 
 func (m *Machine) commitFailure(id MsgID, currState State, reason error) error {
-	transaction := m.store.Transaction(id)
-	if err := m.store.Fail(id, currState, reason); err != nil {
+	transaction, err := m.store.Transaction(id)
+	if err != nil {
+		return fmt.Errorf("cannot open commit failure transaction: %v", err)
+	}
+	if err := m.store.Fail(transaction, id, currState, reason); err != nil {
 		return transaction.Discard(fmt.Errorf("cannot store failure state: %v", err))
 	}
 	if err := transaction.Commit(); err != nil {
@@ -118,12 +124,15 @@ func (m *Machine) retry(n int, fn func() error) error {
 func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 	var nextRunnables []StateID
 
-	transaction := m.store.Transaction(id)
+	transaction, err := m.store.Transaction(id)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open transaction: %v", err)
+	}
 	// book runnable for exclusive start
-	if err := m.store.StoreStateStatus(id, state, stateStatusReady, stateStatusRunning); err != nil {
+	if err := m.store.StoreStateStatus(transaction, id, state, stateStatusReady, stateStatusRunning); err != nil {
 		return nil, transaction.Discard(fmt.Errorf("cannot mark handler started: %v", err))
 	}
-	body, err := m.store.Fetch(id, state, stateStatusRunning)
+	body, err := m.store.Fetch(transaction, id, state, stateStatusRunning)
 	if err != nil {
 		return nil, transaction.Discard(fmt.Errorf("cannot fetch message for handler: %v", err))
 	}
@@ -151,8 +160,11 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 
 	// errors while committing should be retried, we know the handler ran
 	err = m.retry(10, func() error {
-		transaction := m.store.Transaction(id)
-		if err := m.store.StoreStateStatus(id, state, stateStatusRunning, stateStatusDone); err != nil {
+		transaction, err := m.store.Transaction(id)
+		if err != nil {
+			return fmt.Errorf("cannot open handler finished transaction: %v", err)
+		}
+		if err := m.store.StoreStateStatus(transaction, id, state, stateStatusRunning, stateStatusDone); err != nil {
 			return transaction.Discard(fmt.Errorf("cannot mark handler finished: %v", err))
 		}
 		for _, nextState := range nextStates {
@@ -160,7 +172,7 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 				continue
 			}
 
-			nextStateStatus, err := m.computeNextStateStatus(id, nextState)
+			nextStateStatus, err := m.computeNextStateStatus(transaction, id, nextState)
 			if err != nil {
 				return transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
 			}
@@ -190,9 +202,9 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 	return nextRunnables, nil
 }
 
-func (m *Machine) computeNextStateStatus(id MsgID, nextState State) (StateStatus, error) {
+func (m *Machine) computeNextStateStatus(transaction Transaction, id MsgID, nextState State) (StateStatus, error) {
 	var nextStateStatus StateStatus
-	currStateStatus, err := m.store.FetchStateStatus(id, nextState)
+	currStateStatus, err := m.store.FetchStateStatus(transaction, id, nextState)
 	if err != nil {
 		return nextStateStatus, fmt.Errorf("cannot fetch state status: %v", err)
 	}
@@ -205,15 +217,18 @@ func (m *Machine) computeNextStateStatus(id MsgID, nextState State) (StateStatus
 		return nextStateStatus, fmt.Errorf("message %s is in unexpected state %s status %s", id, nextState, currStateStatus)
 	}
 
-	if err = m.store.StoreStateStatus(id, nextState, currStateStatus, nextStateStatus); err != nil {
+	if err = m.store.StoreStateStatus(transaction, id, nextState, currStateStatus, nextStateStatus); err != nil {
 		return nextStateStatus, fmt.Errorf("could not set state %s status %s: %v", nextState, nextStateStatus, err)
 	}
 	return nextStateStatus, nil
 }
 
 func (m *Machine) FetchStates(id MsgID, visitor MessageVisitor) error {
-	transaction := m.store.Transaction(id)
-	if err := m.store.FetchStates(id, visitor); err != nil {
+	transaction, err := m.store.Transaction(id)
+	if err != nil {
+		return fmt.Errorf("cannot open fetch states transaction: %v", err)
+	}
+	if err := m.store.FetchStates(transaction, id, visitor); err != nil {
 		return transaction.Discard(fmt.Errorf("cannot fetch states of %s: %v", id, err))
 	}
 	if err := transaction.Commit(); err != nil {
@@ -223,8 +238,11 @@ func (m *Machine) FetchStates(id MsgID, visitor MessageVisitor) error {
 }
 
 func (m *Machine) Fetch(id MsgID, state State) (io.ReadCloser, error) {
-	transaction := m.store.Transaction(id)
-	body, err := m.store.Fetch(id, state, stateStatusDone)
+	transaction, err := m.store.Transaction(id)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open fetch transaction: %v", err)
+	}
+	body, err := m.store.Fetch(transaction, id, state, stateStatusDone)
 	if err != nil {
 		return nil, transaction.Discard(fmt.Errorf("cannot fetch message: %v", err))
 	}
@@ -243,9 +261,11 @@ func (m *Machine) Receive(id MsgID, body io.ReadCloser, state State) error {
 }
 
 func (m *Machine) receive(id MsgID, body io.ReadCloser, state State) error {
-	transaction := m.store.Transaction(id)
-
-	currStatus, err := m.store.FetchStateStatus(id, state)
+	transaction, err := m.store.Transaction(id)
+	if err != nil {
+		return fmt.Errorf("cannot open receive transaction: %v", err)
+	}
+	currStatus, err := m.store.FetchStateStatus(transaction, id, state)
 	if err != nil {
 		return transaction.Discard(fmt.Errorf("cannot fetch status of state %s for %s: %v", state, id, err))
 	}
@@ -263,7 +283,7 @@ func (m *Machine) receive(id MsgID, body io.ReadCloser, state State) error {
 		return transaction.Discard(fmt.Errorf("trying to store message %s at state %s in invalid status %s", id, state, currStatus))
 	}
 
-	if err := m.store.Store(id, body, state, nextStatus); err != nil {
+	if err := m.store.Store(transaction, id, body, state, nextStatus); err != nil {
 		return transaction.Discard(fmt.Errorf("cannot store message at state %s: %v", state, err))
 	}
 
