@@ -39,29 +39,77 @@ type PSQLStore struct {
 	table    string
 	folder   blobFolder
 	streamer StoreStreamer
+	queries  pgQueries
 }
 
-// TODO: generate with table variable
+type pgQueries struct {
+	pgQueryINSERT         string
+	pgQueryFailUPDATE     string
+	pgQueryUPDATE         string
+	pgQueryGetStateStatus string
+	pgQueryAllByID        string
+	pgQueryGetStatus      string
+	pgQueryRunnables      string
+}
+
 const (
-	pgQueryINSERT         = `INSERT INTO messages (id, state, status, created, modified, fileid) VALUES ($1, $2, $3, NOW(), NOW(), $4);`
-	pgQueryFailUPDATE     = `UPDATE messages SET failed = $1 WHERE id = $3 AND state = $4;`
-	pgQueryUPDATE         = `UPDATE messages SET status = $1 WHERE id = $2 AND state = $3 AND status = $4;`
-	pgQueryGetStateStatus = `SELECT 1 FROM messages WHERE id = $1 AND state = $2 AND status = $3 LIMIT 1;`
-	pgQueryAllByID        = `SELECT state, status, created, modified, error FROM messages WHERE id = $1;`
-	pgQueryGetStatus      = `SELECT status FROM messages WHERE id = $1 AND state = $2 LIMIT 1;`
-	pgQueryRunnables      = `SELECT id, state FROM messages WHERE status = $1 LIMIT 100;`
+	_pgQueryINSERT         = `INSERT INTO %s (id, state, status, created, modified, fileid) VALUES ($1, $2, $3, NOW(), NOW(), $4);`
+	_pgQueryFailUPDATE     = `UPDATE %s SET failed = $1 WHERE id = $3 AND state = $4;`
+	_pgQueryUPDATE         = `UPDATE %s SET status = $1 WHERE id = $2 AND state = $3 AND status = $4;`
+	_pgQueryGetStateStatus = `SELECT 1 FROM %s WHERE id = $1 AND state = $2 AND status = $3 LIMIT 1;`
+	_pgQueryAllByID        = `SELECT state, status, created, modified, error FROM %s WHERE id = $1;`
+	_pgQueryGetStatus      = `SELECT status FROM %s WHERE id = $1 AND state = $2 LIMIT 1;`
+	_pgQueryRunnables      = `SELECT id, state FROM %s WHERE status = $1 LIMIT 100;`
 )
+
+func makePgQueries(table string) pgQueries {
+	return pgQueries{
+		pgQueryINSERT:         fmt.Sprintf(_pgQueryINSERT, table),
+		pgQueryFailUPDATE:     fmt.Sprintf(_pgQueryFailUPDATE, table),
+		pgQueryUPDATE:         fmt.Sprintf(_pgQueryUPDATE, table),
+		pgQueryGetStateStatus: fmt.Sprintf(_pgQueryGetStateStatus, table),
+		pgQueryAllByID:        fmt.Sprintf(_pgQueryAllByID, table),
+		pgQueryGetStatus:      fmt.Sprintf(_pgQueryAllByID, table),
+		pgQueryRunnables:      fmt.Sprintf(_pgQueryRunnables, table),
+	}
+}
+
+func (q *pgQueries) insertNew(tx *sql.Tx, id MsgID, state State, status StateStatus, basename blobBasename) (sql.Result, error) {
+	return tx.Exec(q.pgQueryINSERT, string(id), string(state), string(status), string(basename))
+}
+
+func (q *pgQueries) updateFailure(tx *sql.Tx, id MsgID, state State, reason error) (sql.Result, error) {
+	return tx.Exec(q.pgQueryFailUPDATE, reason.Error(), string(id), string(state))
+}
+
+func (q *pgQueries) updateStatus(tx *sql.Tx, nextStatus StateStatus, id MsgID, st State, currStatus StateStatus) (sql.Result, error) {
+	return tx.Exec(q.pgQueryUPDATE, string(nextStatus), string(id), string(st), string(currStatus))
+}
+
+func (q *pgQueries) allByID(tx *sql.Tx, id MsgID) (*sql.Rows, error) {
+	return tx.Query(q.pgQueryAllByID, string(id))
+}
+
+func (q *pgQueries) allByStatus(tx *sql.Tx, status StateStatus) (*sql.Rows, error) {
+	return tx.Query(q.pgQueryRunnables, string(status))
+}
+
+func (q *pgQueries) getByState(tx *sql.Tx, id MsgID, state State) (*sql.Rows, error) {
+	return tx.Query(q.pgQueryGetStatus, string(id), string(state))
+}
+
+func (q *pgQueries) existsAtStateStatus(tx *sql.Tx, id MsgID, state State, status StateStatus) *sql.Row {
+	return tx.QueryRow(q.pgQueryGetStateStatus, string(id), string(state), string(status))
+}
 
 func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer StoreStreamer, table string) (*PSQLStore, error) {
 	if streamer == nil {
 		streamer = NopStreamer{}
 	}
-	// TODO: hardcoded table name for now
-	/*
-		if table == "" {
-			table = "sagma_messages"
-		}
-	*/
+	if table == "" {
+		table = "sagma_messages"
+	}
+	queries := makePgQueries(table)
 	db, err := sql.Open("postgres", string(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("cannot open database connection pool: %v", err)
@@ -77,6 +125,7 @@ func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer Stor
 		table:    table,
 		folder:   blobFolder(folder),
 		streamer: streamer,
+		queries:  queries,
 	}, nil
 }
 
@@ -95,7 +144,7 @@ func (s *PSQLStore) Store(transaction Transaction, id MsgID, body io.Reader, st 
 			s.log.err.Printf("message %s at state %s in status %s: cannot remove file %s on transaction rollback: %v", id, st, status, filename, err)
 		}
 	})
-	if _, err := t.tx.Exec(pgQueryINSERT, string(id), string(st), string(status), string(basename)); err != nil {
+	if _, err := s.queries.insertNew(t.tx, id, st, status, basename); err != nil {
 		return fmt.Errorf("cannot insert message %s: %v", id, err)
 	}
 	return nil
@@ -103,7 +152,7 @@ func (s *PSQLStore) Store(transaction Transaction, id MsgID, body io.Reader, st 
 
 func (s *PSQLStore) Fail(transaction Transaction, id MsgID, st State, reason error) error {
 	t := transaction.(*txSQL)
-	if _, err := t.tx.Exec(pgQueryFailUPDATE, reason.Error(), string(id), string(st)); err != nil {
+	if _, err := s.queries.updateFailure(t.tx, id, st, reason); err != nil {
 		return fmt.Errorf("cannot set error in database for message %s in state %s: %v", id, st, err)
 	}
 	return nil
@@ -111,7 +160,7 @@ func (s *PSQLStore) Fail(transaction Transaction, id MsgID, st State, reason err
 
 func (s *PSQLStore) FetchStates(transaction Transaction, id MsgID, visitor MessageVisitor) error {
 	t := transaction.(*txSQL)
-	rows, err := t.tx.Query(pgQueryAllByID, string(id))
+	rows, err := s.queries.allByID(t.tx, id) // TODO: bind to query the returned fields for Scan
 	if err != nil {
 		return fmt.Errorf("cannot get all states for message %s: %v", id, err)
 	}
@@ -144,7 +193,7 @@ func (s *PSQLStore) FetchStates(transaction Transaction, id MsgID, visitor Messa
 
 func (s *PSQLStore) Fetch(transaction Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
 	t := transaction.(*txSQL)
-	row := t.tx.QueryRow(pgQueryGetStateStatus, string(id), string(state), string(status))
+	row := s.queries.existsAtStateStatus(t.tx, id, state, status)
 	var dummy int
 	if err := row.Scan(&dummy); err != nil {
 		if err == sql.ErrNoRows {
@@ -169,12 +218,12 @@ func (s *PSQLStore) StoreStateStatus(transaction Transaction, id MsgID, st State
 	t := transaction.(*txSQL)
 	if currStatus == stateStatusWaiting {
 		basename := s.folder.basename(id)
-		if _, err := t.tx.Exec(pgQueryINSERT, string(id), string(st), string(nextStatus), string(basename)); err != nil {
+		if _, err := s.queries.insertNew(t.tx, id, st, nextStatus, basename); err != nil {
 			return fmt.Errorf("cannot insert placeholder for message %s at state %s in status %v: %v", id, st, currStatus, err)
 		}
 		return nil
 	}
-	res, err := t.tx.Exec(pgQueryUPDATE, string(nextStatus), string(id), string(st), string(currStatus))
+	res, err := s.queries.updateStatus(t.tx, nextStatus, id, st, currStatus)
 	if err != nil {
 		return fmt.Errorf("cannot update message %s at state %s from status %s: %v", id, st, currStatus, err)
 	}
@@ -195,7 +244,7 @@ func (s *PSQLStore) Dispose(transaction Transaction, id MsgID) error {
 
 func (s *PSQLStore) FetchStateStatus(transaction Transaction, id MsgID, state State) (StateStatus, error) {
 	t := transaction.(*txSQL)
-	rows, err := t.tx.Query(pgQueryGetStatus, string(id), string(state))
+	rows, err := s.queries.getByState(t.tx, id, state)
 	if err != nil {
 		return stateStatusWaiting, fmt.Errorf("cannot get current status of message %s at state %s: %v", id, state, err)
 	}
@@ -216,7 +265,12 @@ func (s *PSQLStore) FetchStateStatus(transaction Transaction, id MsgID, state St
 }
 
 func (s *PSQLStore) PollRunnables(ids chan<- StateID) error {
-	rows, err := s.db.Query(pgQueryRunnables, string(stateStatusReady))
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cannot create runnables transaction: %v", err)
+	}
+	defer tx.Commit() // Ignore errors, we only read
+	rows, err := s.queries.allByStatus(tx, stateStatusReady)
 	if err != nil {
 		return fmt.Errorf("cannot query for runnables: %v", err)
 	}
