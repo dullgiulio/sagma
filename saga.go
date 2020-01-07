@@ -64,6 +64,16 @@ const (
 	stateStatusError        StateStatus = "error"         // handler completed but failed
 )
 
+func (s StateStatus) IsValid() bool {
+	switch s {
+	case stateStatusWaiting, stateStatusRecvWaiting, stateStatusReadyWaiting,
+		stateStatusReady, stateStatusRunning, stateStatusDone, stateStatusError:
+		return true
+	default:
+		return false
+	}
+}
+
 var stateStatuses []StateStatus = []StateStatus{
 	stateStatusRecvWaiting,
 	stateStatusReadyWaiting,

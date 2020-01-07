@@ -30,7 +30,7 @@ func NewMachine(saga *Saga, store Store, log *Loggers, runbuf int) *Machine {
 func (m *Machine) runRunnable(id MsgID, state State) error {
 	nextRunnables, err := m.transitionRunnable(id, state)
 	if err != nil {
-		return fmt.Errorf("cannot trasition message %s at state %s: %v", id, state, err)
+		return fmt.Errorf("cannot transition message %s at state %s: %v", id, state, err)
 	}
 	// doesn't matter if this gets interrupted mid-way by shutdown: unprocessed messages will be picked up at restart
 	go func() {

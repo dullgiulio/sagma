@@ -112,12 +112,12 @@ func (s *storeType) String() string {
 
 func (s *storeType) Set(v string) error {
 	switch v {
-	case "memory", "files", "shards":
+	case "memory", "files", "shards", "db":
 		s.val = v
 	case "":
 		s.val = "memory"
 	default:
-		return fmt.Errorf("invalid store type %s; known store types are 'memory', 'files' and 'shards'", v)
+		return fmt.Errorf("invalid store type %s; known store types are 'memory', 'db', 'files' and 'shards'", v)
 	}
 	return nil
 }
@@ -229,6 +229,10 @@ func main() {
 	filesRoot := flag.String("files-root", "", "Root folder for files storage")
 	listen := flag.String("listen", ":8080", "IP:PORT to listen to for HTTP")
 	debug := flag.Bool("debug", false, "Print more verbose logging")
+	user := flag.String("db-user", "", "Database user for DB storage")
+	pass := flag.String("db-pass", "", "Database password for DB storage")
+	host := flag.String("db-host", "", "Database host for DB storage")
+	dbname := flag.String("db-name", "", "Database name for DB storage")
 
 	flag.VisitAll(prefixEnv("SAGMA_HTTP", os.Getenv))
 	flag.Parse()
@@ -253,6 +257,11 @@ func main() {
 		store, err = sagma.NewFilestore(loggers, *filesRoot, states, streamerType.make())
 	case "shards":
 		store, err = sagma.NewShardstore(loggers, *filesRoot, states, streamerType.make())
+	case "db":
+		if *user == "" || *host == "" || *dbname == "" {
+			elog.Fatalf("specify user, host and db name for database store")
+		}
+		store, err = sagma.NewPSQLStore(loggers, sagma.PSQLConnString(fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", *user, *pass, *host, *dbname)), *filesRoot, streamerType.make(), "messages")
 	default:
 		store = sagma.NewMemstore()
 	}
