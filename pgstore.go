@@ -3,6 +3,7 @@ package sagma
 import (
 	"crypto/sha1"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,8 +45,10 @@ type PSQLStore struct {
 
 type pgQueries struct {
 	pgQueryINSERT         string
+	pgQueryINSERTctx      string
 	pgQueryFailUPDATE     string
 	pgQueryUPDATE         string
+	pgQuerySaveCtx        string
 	pgQueryGetStateStatus string
 	pgQueryAllByID        string
 	pgQueryGetStatus      string
@@ -54,10 +57,12 @@ type pgQueries struct {
 
 const (
 	_pgQueryINSERT         = `INSERT INTO %s (id, state, status, created, modified, fileid) VALUES ($1, $2, $3, NOW(), NOW(), $4) ON CONFLICT (id, state) DO UPDATE SET status = EXCLUDED.status;`
-	_pgQueryFailUPDATE     = `UPDATE %s SET failed = $1, modified = NOW() WHERE id = $3 AND state = $4;`
+	_pgQueryINSERTctx      = `INSERT INTO %s (id, state, status, created, modified, fileid, context) VALUES ($1, $2, $3, NOW(), NOW(), $4, $5::jsonb) ON CONFLICT (id, state) DO UPDATE SET status = EXCLUDED.status, context = EXCLUDED.context;;`
+	_pgQueryFailUPDATE     = `UPDATE %s SET failed = $1, modified = NOW() WHERE id = $2 AND state = $3;`
 	_pgQueryUPDATE         = `UPDATE %s SET status = $1, modified = NOW() WHERE id = $2 AND state = $3 AND status = $4;`
-	_pgQueryGetStateStatus = `SELECT 1 FROM %s WHERE id = $1 AND state = $2 AND status = $3 LIMIT 1;`
-	_pgQueryAllByID        = `SELECT COALESCE(state, ''), COALESCE(status, ''), created, modified, COALESCE(error, '') FROM %s WHERE id = $1;`
+	_pgQuerySaveCtx        = `UPDATE %s SET context = $1::jsonb WHERE id = $2 AND state = $3;`
+	_pgQueryGetStateStatus = `SELECT context FROM %s WHERE id = $1 AND state = $2 AND status = $3 LIMIT 1;`
+	_pgQueryAllByID        = `SELECT COALESCE(state, ''), COALESCE(status, ''), created, modified, COALESCE(error, ''), context FROM %s WHERE id = $1;`
 	_pgQueryGetStatus      = `SELECT COALESCE(status, '') FROM %s WHERE id = $1 AND state = $2 LIMIT 1;`
 	_pgQueryRunnables      = `SELECT id, state FROM %s WHERE status = $1 LIMIT 100;`
 )
@@ -65,8 +70,10 @@ const (
 func makePgQueries(table string) pgQueries {
 	return pgQueries{
 		pgQueryINSERT:         fmt.Sprintf(_pgQueryINSERT, table),
+		pgQueryINSERTctx:      fmt.Sprintf(_pgQueryINSERTctx, table),
 		pgQueryFailUPDATE:     fmt.Sprintf(_pgQueryFailUPDATE, table),
 		pgQueryUPDATE:         fmt.Sprintf(_pgQueryUPDATE, table),
+		pgQuerySaveCtx:        fmt.Sprintf(_pgQuerySaveCtx, table),
 		pgQueryGetStateStatus: fmt.Sprintf(_pgQueryGetStateStatus, table),
 		pgQueryAllByID:        fmt.Sprintf(_pgQueryAllByID, table),
 		pgQueryGetStatus:      fmt.Sprintf(_pgQueryGetStatus, table),
@@ -78,12 +85,20 @@ func (q *pgQueries) insertNew(tx *sql.Tx, id MsgID, state State, status StateSta
 	return tx.Exec(q.pgQueryINSERT, string(id), string(state), string(status), string(basename))
 }
 
+func (q *pgQueries) insertNewContext(tx *sql.Tx, id MsgID, state State, status StateStatus, basename blobBasename, ctx string) (sql.Result, error) {
+	return tx.Exec(q.pgQueryINSERTctx, string(id), string(state), string(status), string(basename), ctx)
+}
+
 func (q *pgQueries) updateFailure(tx *sql.Tx, id MsgID, state State, reason error) (sql.Result, error) {
 	return tx.Exec(q.pgQueryFailUPDATE, reason.Error(), string(id), string(state))
 }
 
 func (q *pgQueries) updateStatus(tx *sql.Tx, nextStatus StateStatus, id MsgID, st State, currStatus StateStatus) (sql.Result, error) {
 	return tx.Exec(q.pgQueryUPDATE, string(nextStatus), string(id), string(st), string(currStatus))
+}
+
+func (q *pgQueries) updateContext(tx *sql.Tx, id MsgID, st State, context string) (sql.Result, error) {
+	return tx.Exec(q.pgQuerySaveCtx, context, id, st)
 }
 
 func (q *pgQueries) allByID(tx *sql.Tx, id MsgID) (*sql.Rows, error) {
@@ -95,10 +110,11 @@ func (q *pgQueries) allByStatus(tx *sql.Tx, status StateStatus) (*sql.Rows, erro
 }
 
 func (q *pgQueries) getByState(tx *sql.Tx, id MsgID, state State) (*sql.Rows, error) {
+	// TODO: should be QueryRow
 	return tx.Query(q.pgQueryGetStatus, string(id), string(state))
 }
 
-func (q *pgQueries) existsAtStateStatus(tx *sql.Tx, id MsgID, state State, status StateStatus) *sql.Row {
+func (q *pgQueries) contextAtStateStatus(tx *sql.Tx, id MsgID, state State, status StateStatus) *sql.Row {
 	return tx.QueryRow(q.pgQueryGetStateStatus, string(id), string(state), string(status))
 }
 
@@ -129,7 +145,7 @@ func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer Stor
 	}, nil
 }
 
-func (s *PSQLStore) Store(transaction Transaction, id MsgID, body io.Reader, st State, status StateStatus) error {
+func (s *PSQLStore) Store(transaction Transaction, id MsgID, body io.Reader, st State, status StateStatus, ctx Context) error {
 	basename := s.folder.basename(id)
 	filename := s.folder.file(s.streamer, st, basename)
 	if err := os.MkdirAll(filepath.Dir(string(filename)), 0744); err != nil {
@@ -144,8 +160,32 @@ func (s *PSQLStore) Store(transaction Transaction, id MsgID, body io.Reader, st 
 			s.log.err.Printf("message %s at state %s in status %s: cannot remove file %s on transaction rollback: %v", id, st, status, filename, err)
 		}
 	})
-	if _, err := s.queries.insertNew(t.tx, id, st, status, basename); err != nil {
+	ctxJSON, err := json.Marshal(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot marshal JSON context: %v", err)
+	}
+	if _, err := s.queries.insertNewContext(t.tx, id, st, status, basename, string(ctxJSON)); err != nil {
 		return fmt.Errorf("cannot insert message %s: %v", id, err)
+	}
+	return nil
+}
+
+func (s *PSQLStore) StoreContext(transaction Transaction, id MsgID, st State, ctx Context) error {
+	t := transaction.(*txSQL)
+	ctxJSON, err := json.Marshal(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot marshall JSON from handler: %v", err)
+	}
+	res, err := s.queries.updateContext(t.tx, id, st, string(ctxJSON))
+	if err != nil {
+		return fmt.Errorf("cannot run update query for context: %v", err)
+	}
+	nrows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cannot get rows affected: %v", err)
+	}
+	if nrows == 0 {
+		return fmt.Errorf("context for message %s at status %s was not updated", id, st)
 	}
 	return nil
 }
@@ -171,17 +211,22 @@ func (s *PSQLStore) FetchStates(transaction Transaction, id MsgID, visitor Messa
 			status            string
 			created, modified time.Time
 			failure           string
+			ctxRaw            []byte
 		)
-		if err := rows.Scan(&state, &status, &created, &modified, &failure); err != nil {
+		if err := rows.Scan(&state, &status, &created, &modified, &failure, &ctxRaw); err != nil {
 			return fmt.Errorf("cannot scan row for message statuses: %v", err)
 		}
+		ctx := NewContext()
+		if err := json.Unmarshal(ctxRaw, &ctx); err != nil {
+			return fmt.Errorf("cannot unmarshal context JSON: %v", err)
+		}
 		if failure != "" {
-			if err := visitor.Failed(id, State(state), errors.New(failure)); err != nil {
+			if err := visitor.Failed(id, State(state), errors.New(failure), ctx); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := visitor.Visit(id, State(state), StateStatus(status)); err != nil {
+		if err := visitor.Visit(id, State(state), StateStatus(status), ctx); err != nil {
 			return err
 		}
 	}
@@ -191,27 +236,31 @@ func (s *PSQLStore) FetchStates(transaction Transaction, id MsgID, visitor Messa
 	return nil
 }
 
-func (s *PSQLStore) Fetch(transaction Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
+func (s *PSQLStore) Fetch(transaction Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, Context, error) {
 	t := transaction.(*txSQL)
-	row := s.queries.existsAtStateStatus(t.tx, id, state, status)
-	var dummy int
-	if err := row.Scan(&dummy); err != nil {
+	row := s.queries.contextAtStateStatus(t.tx, id, state, status)
+	var ctxRaw []byte
+	if err := row.Scan(&ctxRaw); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("cannot get message %s at state %s in status %s: no such entry in DB", id, state, status)
+			return nil, nil, fmt.Errorf("cannot get message %s at state %s in status %s: no such entry in DB", id, state, status)
 		}
-		return nil, fmt.Errorf("cannot scan row for message status: %v", err)
+		return nil, nil, fmt.Errorf("cannot scan row for message status: %v", err)
+	}
+	ctx := NewContext()
+	if err := json.Unmarshal(ctxRaw, &ctx); err != nil {
+		return nil, nil, fmt.Errorf("cannot unmarshal context from database: %v", err)
 	}
 	basename := s.folder.basename(id)
 	filename := s.folder.file(s.streamer, state, basename)
 	fh, err := os.Open(filename)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open blob store file: %v", err)
+		return nil, nil, fmt.Errorf("cannot open blob store file: %v", err)
 	}
 	r, err := s.streamer.Reader(fh)
 	if err != nil {
-		return nil, fmt.Errorf("cannot wrap reader with streamer: %v", err)
+		return nil, nil, fmt.Errorf("cannot wrap reader with streamer: %v", err)
 	}
-	return r, nil
+	return r, ctx, nil
 }
 
 func (s *PSQLStore) StoreStateStatus(transaction Transaction, id MsgID, st State, currStatus, nextStatus StateStatus) error {

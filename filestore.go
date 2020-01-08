@@ -146,7 +146,8 @@ func (f *Filestore) cleanWaitingStates(id MsgID, state State) error {
 	return nil
 }
 
-func (f *Filestore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus) error {
+// TODO: context is unsupported
+func (f *Filestore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus, ctx Context) error {
 	folder := f.prefix.messageFolder(id, st, status)
 	if err := os.MkdirAll(string(folder), 0744); err != nil {
 		return fmt.Errorf("cannot make message folder: %v", err)
@@ -162,6 +163,11 @@ func (f *Filestore) Store(tx Transaction, id MsgID, body io.Reader, st State, st
 	return nil
 }
 
+func (f *Filestore) StoreContext(tx Transaction, id MsgID, st State, ctx Context) error {
+	// TODO
+	return nil
+}
+
 func (f *Filestore) Fail(tx Transaction, id MsgID, st State, reason error) error {
 	folder := f.prefix.messageFolder(id, st, stateStatusError)
 	file := folder.contentsFile("error")
@@ -171,6 +177,7 @@ func (f *Filestore) Fail(tx Transaction, id MsgID, st State, reason error) error
 	if err := ioutil.WriteFile(file, []byte(reason.Error()), 0644); err != nil {
 		return fmt.Errorf("cannot write contents file failure result: %v", err)
 	}
+	// TODO: write context file
 	return nil
 }
 
@@ -185,6 +192,7 @@ func (f *Filestore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor
 		}
 		return true, nil
 	}
+	ctx := Context(make(map[string]interface{})) // TODO: fetch context from file
 	for _, status := range statusList {
 		for _, state := range f.states {
 			folder := f.prefix.messageFolder(id, state, status)
@@ -193,7 +201,7 @@ func (f *Filestore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor
 				return fmt.Errorf("cannot stat message file to get statuses: %v", err)
 			}
 			if exists {
-				if err := visitor.Visit(id, state, status); err != nil {
+				if err := visitor.Visit(id, state, status, ctx); err != nil {
 					return err
 				}
 			}
@@ -204,7 +212,7 @@ func (f *Filestore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor
 				}
 				return fmt.Errorf("cannot read error file: %v", err)
 			}
-			if err := visitor.Failed(id, state, errors.New(string(contents))); err != nil {
+			if err := visitor.Failed(id, state, errors.New(string(contents)), ctx); err != nil {
 				return err
 			}
 		}
@@ -212,18 +220,19 @@ func (f *Filestore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor
 	return nil
 }
 
-func (f *Filestore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
+func (f *Filestore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, Context, error) {
 	folder := f.prefix.messageFolder(id, state, status)
 	file := folder.contentsFile(f.contentFilename)
 	fh, err := os.Open(file)
 	if err != nil {
-		return nil, NotFoundError(fmt.Errorf("cannot read message contents: %v", err))
+		return nil, nil, NotFoundError(fmt.Errorf("cannot read message contents: %v", err))
 	}
 	r, err := f.streamer.Reader(fh)
 	if err != nil {
-		return nil, fmt.Errorf("cannot wrap reader with streamer: %v", err)
+		return nil, nil, fmt.Errorf("cannot wrap reader with streamer: %v", err)
 	}
-	return r, nil
+	ctx := Context(make(map[string]interface{})) // TODO: decode from context file
+	return r, ctx, nil
 }
 
 func (f *Filestore) StoreStateStatus(tx Transaction, id MsgID, st State, currStatus, nextStatus StateStatus) error {

@@ -22,7 +22,7 @@ type StateID struct {
 	state State
 }
 
-type Handler func(id MsgID, body io.Reader) (nextStates SagaStates, err error)
+type Handler func(id MsgID, ctx Context, body io.Reader, saveCtx ContextSaverFn) (nextStates SagaStates, err error)
 
 type SagaStates []State
 

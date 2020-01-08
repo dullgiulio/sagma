@@ -132,12 +132,11 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 	if err := m.store.StoreStateStatus(transaction, id, state, stateStatusReady, stateStatusRunning); err != nil {
 		return nil, transaction.Discard(fmt.Errorf("cannot mark handler started: %v", err))
 	}
-	body, err := m.store.Fetch(transaction, id, state, stateStatusRunning)
+	body, ctx, err := m.store.Fetch(transaction, id, state, stateStatusRunning)
 	if err != nil {
 		return nil, transaction.Discard(fmt.Errorf("cannot fetch message for handler: %v", err))
 	}
-	// TODO: catch closer error
-	defer body.Close()
+	defer body.Close() // ignore error as we only read
 	if err := transaction.Commit(); err != nil {
 		return nil, fmt.Errorf("cannot commit transaction for start handling: %v", err)
 	}
@@ -147,7 +146,12 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 		return nil, fmt.Errorf("state %s does not have a handler, execution finished", state)
 	}
 
-	nextStates, handlerErr := handler(id, body)
+	// sets current state and message ID for handler to update context data
+	saveCtx := func(ctx Context) error {
+		return m.SaveContext(id, state, ctx)
+	}
+
+	nextStates, handlerErr := handler(id, ctx, body, saveCtx)
 	if handlerErr != nil {
 		commErr := m.retry(10, func() error {
 			return m.commitFailure(id, state, handlerErr)
@@ -237,30 +241,44 @@ func (m *Machine) FetchStates(id MsgID, visitor MessageVisitor) error {
 	return nil
 }
 
-func (m *Machine) Fetch(id MsgID, state State) (io.ReadCloser, error) {
+func (m *Machine) Fetch(id MsgID, state State) (io.ReadCloser, Context, error) {
 	transaction, err := m.store.Transaction(id)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open fetch transaction: %v", err)
+		return nil, nil, fmt.Errorf("cannot open fetch transaction: %v", err)
 	}
-	body, err := m.store.Fetch(transaction, id, state, stateStatusDone)
+	body, ctx, err := m.store.Fetch(transaction, id, state, stateStatusDone)
 	if err != nil {
-		return nil, transaction.Discard(fmt.Errorf("cannot fetch message: %v", err))
+		return nil, nil, transaction.Discard(fmt.Errorf("cannot fetch message: %v", err))
 	}
 	if err := transaction.Commit(); err != nil {
-		return nil, fmt.Errorf("cannot close read-only transaction: %v", err)
+		return nil, nil, fmt.Errorf("cannot close read-only transaction: %v", err)
 	}
-	return body, nil
+	return body, ctx, nil
 }
 
-func (m *Machine) Receive(id MsgID, body io.ReadCloser, state State) error {
-	err := m.receive(id, body, state)
+func (m *Machine) Receive(id MsgID, body io.ReadCloser, state State, ctx Context) error {
+	err := m.receive(id, body, state, ctx)
 	if err1 := body.Close(); err == nil {
 		err = err1
 	}
 	return err
 }
 
-func (m *Machine) receive(id MsgID, body io.ReadCloser, state State) error {
+func (m *Machine) SaveContext(id MsgID, state State, ctx Context) error {
+	transaction, err := m.store.Transaction(id)
+	if err != nil {
+		return fmt.Errorf("cannot open save context transaction: %v", err)
+	}
+	if err := m.store.StoreContext(transaction, id, state, ctx); err != nil {
+		return transaction.Discard(fmt.Errorf("cannot save context for message %s at state %s: %v", id, state, err))
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("cannot commit save context transaction: %v", err)
+	}
+	return nil
+}
+
+func (m *Machine) receive(id MsgID, body io.ReadCloser, state State, ctx Context) error {
 	transaction, err := m.store.Transaction(id)
 	if err != nil {
 		return fmt.Errorf("cannot open receive transaction: %v", err)
@@ -283,7 +301,7 @@ func (m *Machine) receive(id MsgID, body io.ReadCloser, state State) error {
 		return transaction.Discard(fmt.Errorf("trying to store message %s at state %s in invalid status %s", id, state, currStatus))
 	}
 
-	if err := m.store.Store(transaction, id, body, state, nextStatus); err != nil {
+	if err := m.store.Store(transaction, id, body, state, nextStatus, ctx); err != nil {
 		return transaction.Discard(fmt.Errorf("cannot store message at state %s: %v", state, err))
 	}
 

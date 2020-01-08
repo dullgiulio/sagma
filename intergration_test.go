@@ -27,7 +27,7 @@ func TestOrderMessages(t *testing.T) {
 	store := NewMemstore()
 
 	send := func(wg *sync.WaitGroup, machine *Machine, state State, id MsgID, body io.ReadCloser) {
-		if err := machine.Receive(id, body, state); err != nil {
+		if err := machine.Receive(id, body, state, NewContext()); err != nil {
 			t.Fatalf("cannot send message: %v\n", err)
 		}
 		wg.Done()
@@ -42,7 +42,7 @@ func TestOrderMessages(t *testing.T) {
 	wg.Add(6) // three steps, three sends
 
 	machine := NewMachine(saga, store, loggers, 10)
-	saga.Begin(stateFirst, func(id MsgID, body io.Reader) (SagaStates, error) {
+	saga.Begin(stateFirst, func(id MsgID, ctx Context, body io.Reader, saveCtx ContextSaverFn) (SagaStates, error) {
 		defer wg.Done()
 
 		expectedState := <-expectedStates
@@ -60,7 +60,7 @@ func TestOrderMessages(t *testing.T) {
 			return SagaEnd, nil
 		})
 	*/
-	saga.Step(stateSecond, func(id MsgID, body io.Reader) (SagaStates, error) {
+	saga.Step(stateSecond, func(id MsgID, ctx Context, body io.Reader, saveCtx ContextSaverFn) (SagaStates, error) {
 		defer wg.Done()
 
 		expectedState := <-expectedStates
@@ -70,7 +70,7 @@ func TestOrderMessages(t *testing.T) {
 
 		return SagaNext(stateThird), nil
 	})
-	saga.Step(stateThird, func(id MsgID, body3 io.Reader) (SagaStates, error) {
+	saga.Step(stateThird, func(id MsgID, ctx Context, body3 io.Reader, saveCtx ContextSaverFn) (SagaStates, error) {
 		defer wg.Done()
 
 		expectedState := <-expectedStates
@@ -78,12 +78,12 @@ func TestOrderMessages(t *testing.T) {
 			t.Fatalf("expected state is %s but got %s", expectedState, stateFirst)
 		}
 
-		body1, err := machine.Fetch(id, stateFirst)
+		body1, _, err := machine.Fetch(id, stateFirst)
 		if err != nil {
 			return SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
 		}
 		defer body1.Close()
-		body2, err := machine.Fetch(id, stateSecond)
+		body2, _, err := machine.Fetch(id, stateSecond)
 		if err != nil {
 			return SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
 		}

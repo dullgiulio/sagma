@@ -21,7 +21,8 @@ func NewMemstore() *Memstore {
 	}
 }
 
-func (m *Memstore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus) error {
+// TODO: support context
+func (m *Memstore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus, ctx Context) error {
 	stateMsg, ok := m.statusStateMsg[status]
 	if !ok {
 		stateMsg = make(map[State]map[MsgID][]byte)
@@ -43,23 +44,29 @@ func (m *Memstore) Store(tx Transaction, id MsgID, body io.Reader, st State, sta
 	return nil
 }
 
+func (m *Memstore) StoreContext(tx Transaction, id MsgID, state State, ctx Context) error {
+	// TODO
+	return nil
+}
+
 func (m *Memstore) Fail(tx Transaction, id MsgID, state State, reason error) error {
 	// TODO
 	return nil
 }
 
 func (m *Memstore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor) error {
+	ctx := Context(make(map[string]interface{}))
 	for status, stateMsg := range m.statusStateMsg {
 		for state, msgs := range stateMsg {
 			if _, ok := msgs[id]; ok {
-				visitor.Visit(id, state, status)
+				visitor.Visit(id, state, status, ctx)
 			}
 		}
 	}
 	return nil
 }
 
-func (m *Memstore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
+func (m *Memstore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, Context, error) {
 	buf := func() []byte {
 		stateMsg, ok := m.statusStateMsg[status]
 		if !ok {
@@ -72,9 +79,10 @@ func (m *Memstore) Fetch(tx Transaction, id MsgID, state State, status StateStat
 		return msgs[id]
 	}()
 	if buf == nil {
-		return nil, NotFoundError(fmt.Errorf("message %s not found at state %s in status %s", id, state, status))
+		return nil, nil, NotFoundError(fmt.Errorf("message %s not found at state %s in status %s", id, state, status))
 	}
-	return ioutil.NopCloser(bytes.NewReader(buf)), nil
+	ctx := Context(make(map[string]interface{})) // TODO: fetch
+	return ioutil.NopCloser(bytes.NewReader(buf)), ctx, nil
 }
 
 func (m *Memstore) StoreStateStatus(tx Transaction, id MsgID, st State, currStatus, nextStatus StateStatus) error {

@@ -25,9 +25,14 @@ func NewShardstore(log *Loggers, prefix string, states []State, streamer StoreSt
 	}, nil
 }
 
-func (s *Shardstore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus) error {
+func (s *Shardstore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus, ctx Context) error {
 	hash, store := s.get(id)
-	return store.Store(tx, hash, body, st, status)
+	return store.Store(tx, hash, body, st, status, ctx)
+}
+
+func (s *Shardstore) StoreContext(tx Transaction, id MsgID, st State, ctx Context) error {
+	hash, store := s.get(id)
+	return store.StoreContext(tx, hash, st, ctx)
 }
 
 func (s *Shardstore) Fail(tx Transaction, id MsgID, state State, reason error) error {
@@ -40,7 +45,7 @@ func (s *Shardstore) FetchStates(tx Transaction, id MsgID, visitor MessageVisito
 	return store.FetchStates(tx, hash, visitor)
 }
 
-func (s *Shardstore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, error) {
+func (s *Shardstore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, Context, error) {
 	hash, store := s.get(id)
 	return store.Fetch(tx, hash, state, status)
 }

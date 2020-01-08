@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 
@@ -138,19 +139,21 @@ func httpErrorCode(err error) int {
 
 type messageStateStatuses map[sagma.State]interface{}
 
-func (m messageStateStatuses) Visit(id sagma.MsgID, state sagma.State, status sagma.StateStatus) error {
-	stmap := make(map[string]string)
+func (m messageStateStatuses) Visit(id sagma.MsgID, state sagma.State, status sagma.StateStatus, ctx sagma.Context) error {
+	stmap := make(map[string]interface{})
 	stmap["state"] = string(state)
 	stmap["status"] = string(status)
+	stmap["context"] = ctx
 	m[state] = stmap
 	return nil
 }
 
-func (m messageStateStatuses) Failed(id sagma.MsgID, state sagma.State, failed error) error {
+func (m messageStateStatuses) Failed(id sagma.MsgID, state sagma.State, failed error, ctx sagma.Context) error {
 	errmap := make(map[string]interface{})
 	errmap["state"] = string(state)
 	errmap["failed"] = true
 	errmap["error"] = failed.Error()
+	errmap["context"] = ctx
 	m[state] = errmap
 	return nil
 }
@@ -192,7 +195,7 @@ func fetchHandler(machine *sagma.Machine, state sagma.State) func(w http.Respons
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		id := sagma.MsgID(vars["messageID"])
-		body, err := machine.Fetch(id, state)
+		body, _, err := machine.Fetch(id, state)
 		if err != nil {
 			elog.Printf("cannot fetch message %s: %v", id, err)
 			http.Error(w, err.Error(), httpErrorCode(err))
@@ -212,7 +215,7 @@ func sendHandler(machine *sagma.Machine, state sagma.State) func(w http.Response
 		vars := mux.Vars(r)
 		id := sagma.MsgID(vars["messageID"])
 		defer r.Body.Close()
-		if err := machine.Receive(id, r.Body, state); err != nil {
+		if err := machine.Receive(id, r.Body, state, sagma.NewContext()); err != nil {
 			elog.Printf("cannot put message: %v\n", err)
 			http.Error(w, err.Error(), httpErrorCode(err))
 			return
@@ -270,21 +273,38 @@ func main() {
 	}
 
 	machine := sagma.NewMachine(saga, store, loggers, 10)
-	saga.Begin(stateFirst, func(id sagma.MsgID, body io.Reader) (sagma.SagaStates, error) {
+	saga.Begin(stateFirst, func(id sagma.MsgID, ctx sagma.Context, body io.Reader, saveCtx sagma.ContextSaverFn) (sagma.SagaStates, error) {
 		dlog.Printf("*** 1 handling first state completed for %s\n", id)
+
+		ctx["executedAt"] = time.Now()
+		if err := saveCtx(ctx); err != nil {
+			return sagma.SagaEnd, fmt.Errorf("cannot save context: %v", err)
+		}
+
 		return sagma.SagaNext(stateSecond), nil
 	})
-	saga.Step(stateSecond, func(id sagma.MsgID, body io.Reader) (sagma.SagaStates, error) {
+	saga.Step(stateSecond, func(id sagma.MsgID, ctx sagma.Context, body io.Reader, saveCtx sagma.ContextSaverFn) (sagma.SagaStates, error) {
 		dlog.Printf("*** 2 handling second state completed for %s\n", id)
+
+		ctx["executedAt"] = time.Now()
+		if err := saveCtx(ctx); err != nil {
+			return sagma.SagaEnd, fmt.Errorf("cannot save context: %v", err)
+		}
+
 		return sagma.SagaNext(stateThird), nil
 	})
-	saga.Step(stateThird, func(id sagma.MsgID, body3 io.Reader) (sagma.SagaStates, error) {
-		body1, err := machine.Fetch(id, stateFirst)
+	saga.Step(stateThird, func(id sagma.MsgID, ctx sagma.Context, body3 io.Reader, saveCtx sagma.ContextSaverFn) (sagma.SagaStates, error) {
+		ctx["startedAt"] = time.Now()
+		if err := saveCtx(ctx); err != nil {
+			return sagma.SagaEnd, fmt.Errorf("cannot save context: %v", err)
+		}
+
+		body1, _, err := machine.Fetch(id, stateFirst)
 		if err != nil {
 			return sagma.SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
 		}
 		defer body1.Close()
-		body2, err := machine.Fetch(id, stateSecond)
+		body2, _, err := machine.Fetch(id, stateSecond)
 		if err != nil {
 			return sagma.SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
 		}
@@ -294,6 +314,12 @@ func main() {
 			return sagma.SagaEnd, fmt.Errorf("cannot dump messages to output: %v", err)
 		}
 		dlog.Printf("*** 3 handling third state completed %s\n", id)
+
+		ctx["finishedAt"] = time.Now()
+		if err := saveCtx(ctx); err != nil {
+			return sagma.SagaEnd, fmt.Errorf("cannot save context: %v", err)
+		}
+
 		return sagma.SagaEnd, nil
 	})
 	go machine.Run(*workers)
