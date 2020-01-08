@@ -57,17 +57,17 @@ type pgQueries struct {
 
 const (
 	_pgQueryINSERT         = `INSERT INTO %s (id, state, status, created, modified, fileid) VALUES ($1, $2, $3, NOW(), NOW(), $4) ON CONFLICT (id, state) DO UPDATE SET status = EXCLUDED.status;`
-	_pgQueryINSERTctx      = `INSERT INTO %s (id, state, status, created, modified, fileid, context) VALUES ($1, $2, $3, NOW(), NOW(), $4, $5::jsonb) ON CONFLICT (id, state) DO UPDATE SET status = EXCLUDED.status, context = EXCLUDED.context;;`
+	_pgQueryINSERTctx      = `INSERT INTO %s (id, state, status, created, modified, fileid, context) VALUES ($1, $2, $3, NOW(), NOW(), $4, $5::jsonb) ON CONFLICT (id, state) DO UPDATE SET status = EXCLUDED.status, context = EXCLUDED.context;`
 	_pgQueryFailUPDATE     = `UPDATE %s SET failed = $1, modified = NOW() WHERE id = $2 AND state = $3;`
 	_pgQueryUPDATE         = `UPDATE %s SET status = $1, modified = NOW() WHERE id = $2 AND state = $3 AND status = $4;`
 	_pgQuerySaveCtx        = `UPDATE %s SET context = $1::jsonb WHERE id = $2 AND state = $3;`
 	_pgQueryGetStateStatus = `SELECT context FROM %s WHERE id = $1 AND state = $2 AND status = $3 LIMIT 1;`
 	_pgQueryAllByID        = `SELECT COALESCE(state, ''), COALESCE(status, ''), created, modified, COALESCE(error, ''), context FROM %s WHERE id = $1;`
 	_pgQueryGetStatus      = `SELECT COALESCE(status, '') FROM %s WHERE id = $1 AND state = $2 LIMIT 1;`
-	_pgQueryRunnables      = `SELECT id, state FROM %s WHERE status = $1 LIMIT 100;`
+	_pgQueryRunnables      = `SELECT id, state FROM %s WHERE status = $1 AND modified < NOW() - INTERVAL '%d seconds' LIMIT 100;`
 )
 
-func makePgQueries(table string) pgQueries {
+func makePgQueries(table string, runnablesAfter time.Duration) pgQueries {
 	return pgQueries{
 		pgQueryINSERT:         fmt.Sprintf(_pgQueryINSERT, table),
 		pgQueryINSERTctx:      fmt.Sprintf(_pgQueryINSERTctx, table),
@@ -77,7 +77,7 @@ func makePgQueries(table string) pgQueries {
 		pgQueryGetStateStatus: fmt.Sprintf(_pgQueryGetStateStatus, table),
 		pgQueryAllByID:        fmt.Sprintf(_pgQueryAllByID, table),
 		pgQueryGetStatus:      fmt.Sprintf(_pgQueryGetStatus, table),
-		pgQueryRunnables:      fmt.Sprintf(_pgQueryRunnables, table),
+		pgQueryRunnables:      fmt.Sprintf(_pgQueryRunnables, table, int(runnablesAfter.Seconds())),
 	}
 }
 
@@ -118,14 +118,14 @@ func (q *pgQueries) contextAtStateStatus(tx *sql.Tx, id MsgID, state State, stat
 	return tx.QueryRow(q.pgQueryGetStateStatus, string(id), string(state), string(status))
 }
 
-func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer StoreStreamer, table string) (*PSQLStore, error) {
+func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer StoreStreamer, table string, timeouts *Timeouts) (*PSQLStore, error) {
 	if streamer == nil {
 		streamer = NopStreamer{}
 	}
 	if table == "" {
 		table = "sagma_messages"
 	}
-	queries := makePgQueries(table)
+	queries := makePgQueries(table, timeouts.RunnableLeftBehind)
 	db, err := sql.Open("postgres", string(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("cannot open database connection pool: %v", err)
@@ -314,28 +314,37 @@ func (s *PSQLStore) FetchStateStatus(transaction Transaction, id MsgID, state St
 }
 
 func (s *PSQLStore) PollRunnables(ids chan<- StateID) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("cannot create runnables transaction: %v", err)
-	}
-	defer tx.Commit() // Ignore errors, we only read
-	rows, err := s.queries.allByStatus(tx, stateStatusReady)
-	if err != nil {
-		return fmt.Errorf("cannot query for runnables: %v", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var (
-			id    MsgID
-			state State
-		)
-		if err := rows.Scan(&id, &state); err != nil {
-			return fmt.Errorf("cannot scan for runnable row: %v", err)
+	var foundEntries bool
+	for {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("cannot create runnables transaction: %v", err)
 		}
-		ids <- StateID{id: id, state: state}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("cannot scan for runnables rows: %v", err)
+		defer tx.Commit() // Ignore errors, we only read
+		rows, err := s.queries.allByStatus(tx, stateStatusReady)
+		if err != nil {
+			return fmt.Errorf("cannot query for runnables: %v", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				id    MsgID
+				state State
+			)
+			if err := rows.Scan(&id, &state); err != nil {
+				return fmt.Errorf("cannot scan for runnable row: %v", err)
+			}
+			foundEntries = true
+			ids <- StateID{id: id, state: state}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("cannot scan for runnables rows: %v", err)
+		}
+		// if nothing was found, stop polling; entries get left behind only when
+		// the process terminates. A new process will pick up the leftovers we leave on shutdown.
+		if !foundEntries {
+			break
+		}
 	}
 	return nil
 }

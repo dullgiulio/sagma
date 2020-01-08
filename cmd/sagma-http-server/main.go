@@ -220,6 +220,8 @@ func sendHandler(machine *sagma.Machine, state sagma.State) func(w http.Response
 			http.Error(w, err.Error(), httpErrorCode(err))
 			return
 		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte("Created"))
 	}
 }
 
@@ -264,7 +266,14 @@ func main() {
 		if *user == "" || *host == "" || *dbname == "" {
 			elog.Fatalf("specify user, host and db name for database store")
 		}
-		store, err = sagma.NewPSQLStore(loggers, sagma.PSQLConnString(fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", *user, *pass, *host, *dbname)), *filesRoot, streamerType.make(), "messages")
+		store, err = sagma.NewPSQLStore(
+			loggers,
+			sagma.PSQLConnString(fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", *user, *pass, *host, *dbname)),
+			*filesRoot,
+			streamerType.make(),
+			"messages",
+			sagma.NewTimeouts(),
+		)
 	default:
 		store = sagma.NewMemstore()
 	}

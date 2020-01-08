@@ -2,6 +2,7 @@ package sagma
 
 import (
 	"io"
+	"time"
 )
 
 type MsgID string
@@ -53,6 +54,16 @@ func (s *Saga) Step(state State, handler Handler) {
 }
 
 type StateStatus string
+
+type Timeouts struct {
+	RunnableLeftBehind time.Duration // after how long to pickup runnables that were not excuted yet
+}
+
+func NewTimeouts() *Timeouts {
+	return &Timeouts{
+		RunnableLeftBehind: 60 * time.Second,
+	}
+}
 
 const (
 	stateStatusWaiting      StateStatus = ""              // no message yet
