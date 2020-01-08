@@ -254,7 +254,7 @@ func (f *Filestore) StoreStateStatus(tx Transaction, id MsgID, st State, currSta
 	return nil
 }
 
-func (f *Filestore) Dispose(tx Transaction, id MsgID) error {
+func (f *Filestore) Archive(tx Transaction, id MsgID) error {
 	// TODO: for each state and status, if msg exists, move to archived folder
 	return nil
 }

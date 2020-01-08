@@ -33,8 +33,8 @@ type Store interface {
 	// Persist context up to this point in a handler
 	StoreContext(tx Transaction, id MsgID, state State, ctx Context) error
 
-	// Dispose or archive of all messages for this ID at all states
-	Dispose(tx Transaction, id MsgID) error
+	// Archive all messages for this ID at all states
+	Archive(tx Transaction, id MsgID) error
 
 	// Failure handler: should save failure state; returns handling errors
 	Fail(tx Transaction, id MsgID, state State, reason error) error

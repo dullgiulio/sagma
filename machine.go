@@ -78,12 +78,12 @@ func (m *Machine) Shutdown() {
 	<-m.finished
 }
 
-func (m *Machine) dispose(id MsgID) error {
+func (m *Machine) archive(id MsgID) error {
 	transaction, err := m.store.Transaction(id)
 	if err != nil {
-		return fmt.Errorf("cannot open dispose transaction: %v", err)
+		return fmt.Errorf("cannot open archive transaction: %v", err)
 	}
-	if err := m.store.Dispose(transaction, id); err != nil {
+	if err := m.store.Archive(transaction, id); err != nil {
 		return transaction.Discard(fmt.Errorf("store disposal failed: %v", err))
 	}
 	if err := transaction.Commit(); err != nil {
@@ -197,12 +197,11 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 	if err != nil {
 		return nil, fmt.Errorf("commit retry: %v", err)
 	}
-	// TODO: move this; dispose should be called when all states returned END as next
-	/*
-		if err := m.dispose(id); err != nil {
-			return nil, fmt.Errorf("cannot dispose of completed message saga for message %s: %v", id, err)
+	if len(nextRunnables) == 0 {
+		if err := m.archive(id); err != nil {
+			return nil, fmt.Errorf("cannot archive of completed message saga for message %s: %v", id, err)
 		}
-	*/
+	}
 	return nextRunnables, nil
 }
 

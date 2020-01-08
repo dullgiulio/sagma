@@ -55,9 +55,9 @@ func (s *Shardstore) StoreStateStatus(tx Transaction, id MsgID, st State, currSt
 	return store.StoreStateStatus(tx, hash, st, currStatus, nextStatus)
 }
 
-func (s *Shardstore) Dispose(tx Transaction, id MsgID) error {
+func (s *Shardstore) Archive(tx Transaction, id MsgID) error {
 	hash, store := s.get(id)
-	return store.Dispose(tx, hash)
+	return store.Archive(tx, hash)
 }
 
 func (s *Shardstore) FetchStateStatus(tx Transaction, id MsgID, state State) (StateStatus, error) {

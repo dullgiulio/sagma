@@ -41,6 +41,7 @@ type PSQLStore struct {
 	folder   blobFolder
 	streamer StoreStreamer
 	queries  pgQueries
+	states   []State
 }
 
 type pgQueries struct {
@@ -53,6 +54,7 @@ type pgQueries struct {
 	pgQueryAllByID        string
 	pgQueryGetStatus      string
 	pgQueryRunnables      string
+	pgQueryArchive        string
 }
 
 const (
@@ -65,6 +67,7 @@ const (
 	_pgQueryAllByID        = `SELECT COALESCE(state, ''), COALESCE(status, ''), created, modified, COALESCE(error, ''), context FROM %s WHERE id = $1;`
 	_pgQueryGetStatus      = `SELECT COALESCE(status, '') FROM %s WHERE id = $1 AND state = $2 LIMIT 1;`
 	_pgQueryRunnables      = `SELECT id, state FROM %s WHERE status = $1 AND modified < NOW() - INTERVAL '%d seconds' LIMIT 100;`
+	_pgQueryArchive        = `UPDATE %s SET status = $1, modified = NOW() WHERE id = $2 AND status = $3;`
 )
 
 func makePgQueries(table string, runnablesAfter time.Duration) pgQueries {
@@ -77,8 +80,13 @@ func makePgQueries(table string, runnablesAfter time.Duration) pgQueries {
 		pgQueryGetStateStatus: fmt.Sprintf(_pgQueryGetStateStatus, table),
 		pgQueryAllByID:        fmt.Sprintf(_pgQueryAllByID, table),
 		pgQueryGetStatus:      fmt.Sprintf(_pgQueryGetStatus, table),
+		pgQueryArchive:        fmt.Sprintf(_pgQueryArchive, table),
 		pgQueryRunnables:      fmt.Sprintf(_pgQueryRunnables, table, int(runnablesAfter.Seconds())),
 	}
+}
+
+func (q *pgQueries) archive(tx *sql.Tx, id MsgID) (sql.Result, error) {
+	return tx.Exec(q.pgQueryArchive, stateStatusArchived, id, stateStatusDone)
 }
 
 func (q *pgQueries) insertNew(tx *sql.Tx, id MsgID, state State, status StateStatus, basename blobBasename) (sql.Result, error) {
@@ -118,7 +126,7 @@ func (q *pgQueries) contextAtStateStatus(tx *sql.Tx, id MsgID, state State, stat
 	return tx.QueryRow(q.pgQueryGetStateStatus, string(id), string(state), string(status))
 }
 
-func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer StoreStreamer, table string, timeouts *Timeouts) (*PSQLStore, error) {
+func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer StoreStreamer, table string, timeouts *Timeouts, states []State) (*PSQLStore, error) {
 	if streamer == nil {
 		streamer = NopStreamer{}
 	}
@@ -142,6 +150,7 @@ func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer Stor
 		folder:   blobFolder(folder),
 		streamer: streamer,
 		queries:  queries,
+		states:   states,
 	}, nil
 }
 
@@ -286,8 +295,19 @@ func (s *PSQLStore) StoreStateStatus(transaction Transaction, id MsgID, st State
 	return nil
 }
 
-func (s *PSQLStore) Dispose(transaction Transaction, id MsgID) error {
-	// TODO: for each state and status, if msg exists, move to archived folder
+func (s *PSQLStore) Archive(transaction Transaction, id MsgID) error {
+	t := transaction.(*txSQL)
+	res, err := s.queries.archive(t.tx, id)
+	if err != nil {
+		return fmt.Errorf("cannot archive message %s: %v", id, err)
+	}
+	nrows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cannot get rows affected: %v", err)
+	}
+	if nrows < int64(len(s.states)) {
+		return fmt.Errorf("archiving of message %s changes %d states, but should have changed %d", id, nrows, len(s.states))
+	}
 	return nil
 }
 

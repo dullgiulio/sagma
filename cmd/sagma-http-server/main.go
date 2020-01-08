@@ -23,7 +23,7 @@ import (
 // * cleanup dead handlers (states marked as running for longer than timeout) for retry (reset started handler if not finished before deadline) for N times
 //	 put files in running state back in ready state after some delay
 // * delay before dead letter (if not runnable before deadline, call a notify handler)
-// * remove completed after a timeout has passed in "done" mode
+// * remove completed after a timeout has passed in "archived" mode
 
 var (
 	elog *log.Logger
@@ -272,6 +272,7 @@ func main() {
 			streamerType.make(),
 			"messages",
 			sagma.NewTimeouts(),
+			states,
 		)
 	default:
 		store = sagma.NewMemstore()

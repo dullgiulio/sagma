@@ -118,7 +118,7 @@ func (m *Memstore) StoreStateStatus(tx Transaction, id MsgID, st State, currStat
 	return nil
 }
 
-func (m *Memstore) Dispose(tx Transaction, id MsgID) error {
+func (m *Memstore) Archive(tx Transaction, id MsgID) error {
 	for _, stateMsg := range m.statusStateMsg {
 		for _, msgs := range stateMsg {
 			delete(msgs, id)

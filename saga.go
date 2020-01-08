@@ -73,12 +73,13 @@ const (
 	stateStatusRunning      StateStatus = "running"       // handler running
 	stateStatusDone         StateStatus = "done"          // handler completed successfully
 	stateStatusError        StateStatus = "error"         // handler completed but failed
+	stateStatusArchived     StateStatus = "archived"      // all handlers have been completed
 )
 
 func (s StateStatus) IsValid() bool {
 	switch s {
 	case stateStatusWaiting, stateStatusRecvWaiting, stateStatusReadyWaiting,
-		stateStatusReady, stateStatusRunning, stateStatusDone, stateStatusError:
+		stateStatusReady, stateStatusRunning, stateStatusDone, stateStatusError, stateStatusArchived:
 		return true
 	default:
 		return false
