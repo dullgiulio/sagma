@@ -290,7 +290,7 @@ func main() {
 		}
 		defer body2.Close()
 		mr := io.MultiReader(body1, body2, body3)
-		if _, err := io.Copy(os.Stdout, mr); err != nil {
+		if _, err := io.Copy(ioutil.Discard, mr); err != nil {
 			return sagma.SagaEnd, fmt.Errorf("cannot dump messages to output: %v", err)
 		}
 		dlog.Printf("*** 3 handling third state completed %s\n", id)
