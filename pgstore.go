@@ -53,12 +53,12 @@ type pgQueries struct {
 }
 
 const (
-	_pgQueryINSERT         = `INSERT INTO %s (id, state, status, created, modified, fileid) VALUES ($1, $2, $3, NOW(), NOW(), $4);`
-	_pgQueryFailUPDATE     = `UPDATE %s SET failed = $1 WHERE id = $3 AND state = $4;`
-	_pgQueryUPDATE         = `UPDATE %s SET status = $1 WHERE id = $2 AND state = $3 AND status = $4;`
+	_pgQueryINSERT         = `INSERT INTO %s (id, state, status, created, modified, fileid) VALUES ($1, $2, $3, NOW(), NOW(), $4) ON CONFLICT (id, state) DO UPDATE SET status = EXCLUDED.status;`
+	_pgQueryFailUPDATE     = `UPDATE %s SET failed = $1, modified = NOW() WHERE id = $3 AND state = $4;`
+	_pgQueryUPDATE         = `UPDATE %s SET status = $1, modified = NOW() WHERE id = $2 AND state = $3 AND status = $4;`
 	_pgQueryGetStateStatus = `SELECT 1 FROM %s WHERE id = $1 AND state = $2 AND status = $3 LIMIT 1;`
-	_pgQueryAllByID        = `SELECT state, status, created, modified, error FROM %s WHERE id = $1;`
-	_pgQueryGetStatus      = `SELECT status FROM %s WHERE id = $1 AND state = $2 LIMIT 1;`
+	_pgQueryAllByID        = `SELECT COALESCE(state, ''), COALESCE(status, ''), created, modified, COALESCE(error, '') FROM %s WHERE id = $1;`
+	_pgQueryGetStatus      = `SELECT COALESCE(status, '') FROM %s WHERE id = $1 AND state = $2 LIMIT 1;`
 	_pgQueryRunnables      = `SELECT id, state FROM %s WHERE status = $1 LIMIT 100;`
 )
 
@@ -69,7 +69,7 @@ func makePgQueries(table string) pgQueries {
 		pgQueryUPDATE:         fmt.Sprintf(_pgQueryUPDATE, table),
 		pgQueryGetStateStatus: fmt.Sprintf(_pgQueryGetStateStatus, table),
 		pgQueryAllByID:        fmt.Sprintf(_pgQueryAllByID, table),
-		pgQueryGetStatus:      fmt.Sprintf(_pgQueryAllByID, table),
+		pgQueryGetStatus:      fmt.Sprintf(_pgQueryGetStatus, table),
 		pgQueryRunnables:      fmt.Sprintf(_pgQueryRunnables, table),
 	}
 }
