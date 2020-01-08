@@ -282,27 +282,27 @@ func main() {
 	}
 
 	machine := sagma.NewMachine(saga, store, loggers, 10)
-	saga.Begin(stateFirst, func(id sagma.MsgID, ctx sagma.Context, body io.Reader, saveCtx sagma.ContextSaverFn) (sagma.SagaStates, error) {
+	saga.Begin(stateFirst, func(id sagma.MsgID, ctx sagma.Context, body io.Reader, saveCtx sagma.ContextSaverFn) (*sagma.SagaStates, error) {
 		dlog.Printf("*** 1 handling first state completed for %s\n", id)
 
 		ctx["executedAt"] = time.Now()
 		if err := saveCtx(ctx); err != nil {
-			return sagma.SagaEnd, fmt.Errorf("cannot save context: %v", err)
+			return nil, fmt.Errorf("cannot save context: %v", err)
 		}
 
 		return sagma.SagaNext(stateSecond), nil
 	})
-	saga.Step(stateSecond, func(id sagma.MsgID, ctx sagma.Context, body io.Reader, saveCtx sagma.ContextSaverFn) (sagma.SagaStates, error) {
+	saga.Step(stateSecond, func(id sagma.MsgID, ctx sagma.Context, body io.Reader, saveCtx sagma.ContextSaverFn) (*sagma.SagaStates, error) {
 		dlog.Printf("*** 2 handling second state completed for %s\n", id)
 
 		ctx["executedAt"] = time.Now()
 		if err := saveCtx(ctx); err != nil {
-			return sagma.SagaEnd, fmt.Errorf("cannot save context: %v", err)
+			return nil, fmt.Errorf("cannot save context: %v", err)
 		}
 
 		return sagma.SagaNext(stateThird), nil
 	})
-	saga.Step(stateThird, func(id sagma.MsgID, ctx sagma.Context, body3 io.Reader, saveCtx sagma.ContextSaverFn) (sagma.SagaStates, error) {
+	saga.Step(stateThird, func(id sagma.MsgID, ctx sagma.Context, body3 io.Reader, saveCtx sagma.ContextSaverFn) (*sagma.SagaStates, error) {
 		ctx["startedAt"] = time.Now()
 		if err := saveCtx(ctx); err != nil {
 			return sagma.SagaEnd, fmt.Errorf("cannot save context: %v", err)
@@ -310,23 +310,23 @@ func main() {
 
 		body1, _, err := machine.Fetch(id, stateFirst)
 		if err != nil {
-			return sagma.SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
+			return nil, fmt.Errorf("cannot fetch first message: %v", err)
 		}
 		defer body1.Close()
 		body2, _, err := machine.Fetch(id, stateSecond)
 		if err != nil {
-			return sagma.SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
+			return nil, fmt.Errorf("cannot fetch first message: %v", err)
 		}
 		defer body2.Close()
 		mr := io.MultiReader(body1, body2, body3)
 		if _, err := io.Copy(ioutil.Discard, mr); err != nil {
-			return sagma.SagaEnd, fmt.Errorf("cannot dump messages to output: %v", err)
+			return nil, fmt.Errorf("cannot dump messages to output: %v", err)
 		}
 		dlog.Printf("*** 3 handling third state completed %s\n", id)
 
 		ctx["finishedAt"] = time.Now()
 		if err := saveCtx(ctx); err != nil {
-			return sagma.SagaEnd, fmt.Errorf("cannot save context: %v", err)
+			return nil, fmt.Errorf("cannot save context: %v", err)
 		}
 
 		return sagma.SagaEnd, nil

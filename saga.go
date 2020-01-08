@@ -23,14 +23,20 @@ type StateID struct {
 	state State
 }
 
-type Handler func(id MsgID, ctx Context, body io.Reader, saveCtx ContextSaverFn) (nextStates SagaStates, err error)
+type Handler func(id MsgID, ctx Context, body io.Reader, saveCtx ContextSaverFn) (nextStates *SagaStates, err error)
 
-type SagaStates []State
+type SagaStates struct {
+	states   []State
+	finished bool
+}
 
-var SagaEnd SagaStates
+var SagaEnd *SagaStates = &SagaStates{states: nil, finished: true}
 
-func SagaNext(states ...State) SagaStates {
-	return SagaStates(append(make([]State, 0, len(states)), states...))
+func SagaNext(states ...State) *SagaStates {
+	return &SagaStates{
+		states:   append(make([]State, 0, len(states)), states...),
+		finished: false,
+	}
 }
 
 type Saga struct {

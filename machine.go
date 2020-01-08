@@ -171,7 +171,7 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 		if err := m.store.StoreStateStatus(transaction, id, state, stateStatusRunning, stateStatusDone); err != nil {
 			return transaction.Discard(fmt.Errorf("cannot mark handler finished: %v", err))
 		}
-		for _, nextState := range nextStates {
+		for _, nextState := range nextStates.states {
 			if nextState.IsEnd() {
 				continue
 			}
@@ -197,7 +197,7 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 	if err != nil {
 		return nil, fmt.Errorf("commit retry: %v", err)
 	}
-	if len(nextRunnables) == 0 {
+	if nextStates == SagaEnd {
 		if err := m.archive(id); err != nil {
 			return nil, fmt.Errorf("cannot archive of completed message saga for message %s: %v", id, err)
 		}
