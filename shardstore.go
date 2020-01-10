@@ -16,7 +16,7 @@ func NewShardstore(log *Loggers, prefix string, states []State, streamer StoreSt
 	for _, c := range []byte("0123456789abcdef") {
 		fs, err := NewFilestore(log, filepath.Join(prefix, string(c)), states, streamer)
 		if err != nil {
-			return nil, fmt.Errorf("cannot initialize sharded filestore: %v", err)
+			return nil, fmt.Errorf("cannot initialize sharded filestore: %w", err)
 		}
 		stores[c] = fs
 	}

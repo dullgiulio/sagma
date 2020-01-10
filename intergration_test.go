@@ -80,19 +80,19 @@ func TestOrderMessages(t *testing.T) {
 
 		body1, _, err := machine.Fetch(id, stateFirst)
 		if err != nil {
-			return SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
+			return SagaEnd, fmt.Errorf("cannot fetch first message: %w", err)
 		}
 		defer body1.Close()
 		body2, _, err := machine.Fetch(id, stateSecond)
 		if err != nil {
-			return SagaEnd, fmt.Errorf("cannot fetch first message: %v", err)
+			return SagaEnd, fmt.Errorf("cannot fetch first message: %w", err)
 		}
 		defer body2.Close()
 
 		var buf bytes.Buffer
 		mr := io.MultiReader(body1, body2, body3)
 		if _, err := io.Copy(&buf, mr); err != nil {
-			return SagaEnd, fmt.Errorf("cannot dump messages to output: %v", err)
+			return SagaEnd, fmt.Errorf("cannot dump messages to output: %w", err)
 		}
 		if buf.String() != "1 first message\n2 second message\n3 third message\n" {
 			t.Fatalf("did not return correct messages content, content is: %s", buf.String())

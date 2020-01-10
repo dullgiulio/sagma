@@ -30,7 +30,7 @@ func NewMachine(saga *Saga, store Store, log *Loggers, runbuf int) *Machine {
 func (m *Machine) runRunnable(id MsgID, state State) error {
 	nextRunnables, err := m.transitionRunnable(id, state)
 	if err != nil {
-		return fmt.Errorf("cannot transition message %s at state %s: %v", id, state, err)
+		return fmt.Errorf("cannot transition message %s at state %s: %w", id, state, err)
 	}
 	// doesn't matter if this gets interrupted mid-way by shutdown: unprocessed messages will be picked up at restart
 	go func() {
@@ -61,7 +61,7 @@ func (m *Machine) runMachine(wg *sync.WaitGroup) {
 func (m *Machine) Run(n int) {
 	go func() {
 		if err := m.store.PollRunnables(m.runnables); err != nil {
-			m.log.err.Printf("store scanning failed: %v", err)
+			m.log.err.Printf("store scanning failed: %w", err)
 		}
 	}()
 	var wg sync.WaitGroup
@@ -81,13 +81,13 @@ func (m *Machine) Shutdown() {
 func (m *Machine) archive(id MsgID) error {
 	transaction, err := m.store.Transaction(id)
 	if err != nil {
-		return fmt.Errorf("cannot open archive transaction: %v", err)
+		return fmt.Errorf("cannot open archive transaction: %w", err)
 	}
 	if err := m.store.Archive(transaction, id); err != nil {
-		return transaction.Discard(fmt.Errorf("store disposal failed: %v", err))
+		return transaction.Discard(fmt.Errorf("store disposal failed: %w", err))
 	}
 	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("cannot commit transaction for end handling: %v", err)
+		return fmt.Errorf("cannot commit transaction for end handling: %w", err)
 	}
 	return nil
 }
@@ -95,13 +95,13 @@ func (m *Machine) archive(id MsgID) error {
 func (m *Machine) commitFailure(id MsgID, currState State, reason error) error {
 	transaction, err := m.store.Transaction(id)
 	if err != nil {
-		return fmt.Errorf("cannot open commit failure transaction: %v", err)
+		return fmt.Errorf("cannot open commit failure transaction: %w", err)
 	}
 	if err := m.store.Fail(transaction, id, currState, reason); err != nil {
-		return transaction.Discard(fmt.Errorf("cannot store failure state: %v", err))
+		return transaction.Discard(fmt.Errorf("cannot store failure state: %w", err))
 	}
 	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("cannot commit failure transaction: %v", err)
+		return fmt.Errorf("cannot commit failure transaction: %w", err)
 	}
 	return nil
 }
@@ -116,7 +116,7 @@ func (m *Machine) retry(n int, fn func() error) error {
 		m.log.err.Printf("retying after error: %v\n", err)
 	}
 	if err != nil {
-		return fmt.Errorf("failed after %d retries: %v", n, err)
+		return fmt.Errorf("failed after %d retries: %w", n, err)
 	}
 	return nil
 }
@@ -126,19 +126,19 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 
 	transaction, err := m.store.Transaction(id)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open transaction: %v", err)
+		return nil, fmt.Errorf("cannot open transaction: %w", err)
 	}
 	// book runnable for exclusive start
 	if err := m.store.StoreStateStatus(transaction, id, state, stateStatusReady, stateStatusRunning); err != nil {
-		return nil, transaction.Discard(fmt.Errorf("cannot mark handler started: %v", err))
+		return nil, transaction.Discard(fmt.Errorf("cannot mark handler started: %w", err))
 	}
 	body, ctx, err := m.store.Fetch(transaction, id, state, stateStatusRunning)
 	if err != nil {
-		return nil, transaction.Discard(fmt.Errorf("cannot fetch message for handler: %v", err))
+		return nil, transaction.Discard(fmt.Errorf("cannot fetch message for handler: %w", err))
 	}
 	defer body.Close() // ignore error as we only read
 	if err := transaction.Commit(); err != nil {
-		return nil, fmt.Errorf("cannot commit transaction for start handling: %v", err)
+		return nil, fmt.Errorf("cannot commit transaction for start handling: %w", err)
 	}
 
 	handler, ok := m.saga.handlers[state]
@@ -157,19 +157,19 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 			return m.commitFailure(id, state, handlerErr)
 		})
 		if commErr != nil {
-			m.log.err.Printf("cannot commit failed handler result: %v", commErr)
+			m.log.err.Printf("cannot commit failed handler result: %w", commErr)
 		}
-		return nil, fmt.Errorf("handler returned error: %v", handlerErr)
+		return nil, fmt.Errorf("handler returned error: %w", handlerErr)
 	}
 
 	// errors while committing should be retried, we know the handler ran
 	err = m.retry(10, func() error {
 		transaction, err := m.store.Transaction(id)
 		if err != nil {
-			return fmt.Errorf("cannot open handler finished transaction: %v", err)
+			return fmt.Errorf("cannot open handler finished transaction: %w", err)
 		}
 		if err := m.store.StoreStateStatus(transaction, id, state, stateStatusRunning, stateStatusDone); err != nil {
-			return transaction.Discard(fmt.Errorf("cannot mark handler finished: %v", err))
+			return transaction.Discard(fmt.Errorf("cannot mark handler finished: %w", err))
 		}
 		for _, nextState := range nextStates.states {
 			if nextState.IsEnd() {
@@ -178,7 +178,7 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 
 			nextStateStatus, err := m.computeNextStateStatus(transaction, id, nextState)
 			if err != nil {
-				return transaction.Discard(fmt.Errorf("cannot mark next runnable: %v", err))
+				return transaction.Discard(fmt.Errorf("cannot mark next runnable: %w", err))
 			}
 			// if succeeded, mark next state as ready to run if it has a message already
 			if nextStateStatus == stateStatusReady {
@@ -190,16 +190,16 @@ func (m *Machine) transitionRunnable(id MsgID, state State) ([]StateID, error) {
 			}
 		}
 		if err = transaction.Commit(); err != nil {
-			return fmt.Errorf("cannot commit transaction for end handling: %v", err)
+			return fmt.Errorf("cannot commit transaction for end handling: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("commit retry: %v", err)
+		return nil, fmt.Errorf("commit retry: %w", err)
 	}
 	if nextStates == SagaEnd {
 		if err := m.archive(id); err != nil {
-			return nil, fmt.Errorf("cannot archive of completed message saga for message %s: %v", id, err)
+			return nil, fmt.Errorf("cannot archive of completed message saga for message %s: %w", id, err)
 		}
 	}
 	return nextRunnables, nil
@@ -209,7 +209,7 @@ func (m *Machine) computeNextStateStatus(transaction Transaction, id MsgID, next
 	var nextStateStatus StateStatus
 	currStateStatus, err := m.store.FetchStateStatus(transaction, id, nextState)
 	if err != nil {
-		return nextStateStatus, fmt.Errorf("cannot fetch state status: %v", err)
+		return nextStateStatus, fmt.Errorf("cannot fetch state status: %w", err)
 	}
 	switch currStateStatus {
 	case stateStatusWaiting:
@@ -221,7 +221,7 @@ func (m *Machine) computeNextStateStatus(transaction Transaction, id MsgID, next
 	}
 
 	if err = m.store.StoreStateStatus(transaction, id, nextState, currStateStatus, nextStateStatus); err != nil {
-		return nextStateStatus, fmt.Errorf("could not set state %s status %s: %v", nextState, nextStateStatus, err)
+		return nextStateStatus, fmt.Errorf("could not set state %s status %s: %w", nextState, nextStateStatus, err)
 	}
 	return nextStateStatus, nil
 }
@@ -229,13 +229,13 @@ func (m *Machine) computeNextStateStatus(transaction Transaction, id MsgID, next
 func (m *Machine) FetchStates(id MsgID, visitor MessageVisitor) error {
 	transaction, err := m.store.Transaction(id)
 	if err != nil {
-		return fmt.Errorf("cannot open fetch states transaction: %v", err)
+		return fmt.Errorf("cannot open fetch states transaction: %w", err)
 	}
 	if err := m.store.FetchStates(transaction, id, visitor); err != nil {
-		return transaction.Discard(fmt.Errorf("cannot fetch states of %s: %v", id, err))
+		return transaction.Discard(fmt.Errorf("cannot fetch states of %s: %w", id, err))
 	}
 	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("cannot close read-only transaction: %v", err)
+		return fmt.Errorf("cannot close read-only transaction: %w", err)
 	}
 	return nil
 }
@@ -243,14 +243,14 @@ func (m *Machine) FetchStates(id MsgID, visitor MessageVisitor) error {
 func (m *Machine) Fetch(id MsgID, state State) (io.ReadCloser, Context, error) {
 	transaction, err := m.store.Transaction(id)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot open fetch transaction: %v", err)
+		return nil, nil, fmt.Errorf("cannot open fetch transaction: %w", err)
 	}
 	body, ctx, err := m.store.Fetch(transaction, id, state, stateStatusDone)
 	if err != nil {
-		return nil, nil, transaction.Discard(fmt.Errorf("cannot fetch message: %v", err))
+		return nil, nil, transaction.Discard(fmt.Errorf("cannot fetch message: %w", err))
 	}
 	if err := transaction.Commit(); err != nil {
-		return nil, nil, fmt.Errorf("cannot close read-only transaction: %v", err)
+		return nil, nil, fmt.Errorf("cannot close read-only transaction: %w", err)
 	}
 	return body, ctx, nil
 }
@@ -266,13 +266,13 @@ func (m *Machine) Receive(id MsgID, body io.ReadCloser, state State, ctx Context
 func (m *Machine) SaveContext(id MsgID, state State, ctx Context) error {
 	transaction, err := m.store.Transaction(id)
 	if err != nil {
-		return fmt.Errorf("cannot open save context transaction: %v", err)
+		return fmt.Errorf("cannot open save context transaction: %w", err)
 	}
 	if err := m.store.StoreContext(transaction, id, state, ctx); err != nil {
-		return transaction.Discard(fmt.Errorf("cannot save context for message %s at state %s: %v", id, state, err))
+		return transaction.Discard(fmt.Errorf("cannot save context for message %s at state %s: %w", id, state, err))
 	}
 	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("cannot commit save context transaction: %v", err)
+		return fmt.Errorf("cannot commit save context transaction: %w", err)
 	}
 	return nil
 }
@@ -280,11 +280,11 @@ func (m *Machine) SaveContext(id MsgID, state State, ctx Context) error {
 func (m *Machine) receive(id MsgID, body io.ReadCloser, state State, ctx Context) error {
 	transaction, err := m.store.Transaction(id)
 	if err != nil {
-		return fmt.Errorf("cannot open receive transaction: %v", err)
+		return fmt.Errorf("cannot open receive transaction: %w", err)
 	}
 	currStatus, err := m.store.FetchStateStatus(transaction, id, state)
 	if err != nil {
-		return transaction.Discard(fmt.Errorf("cannot fetch status of state %s for %s: %v", state, id, err))
+		return transaction.Discard(fmt.Errorf("cannot fetch status of state %s for %s: %w", state, id, err))
 	}
 
 	var nextStatus StateStatus
@@ -301,11 +301,11 @@ func (m *Machine) receive(id MsgID, body io.ReadCloser, state State, ctx Context
 	}
 
 	if err := m.store.Store(transaction, id, body, state, nextStatus, ctx); err != nil {
-		return transaction.Discard(fmt.Errorf("cannot store message at state %s: %v", state, err))
+		return transaction.Discard(fmt.Errorf("cannot store message at state %s: %w", state, err))
 	}
 
 	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("cannot commit marking of next runnable: %v", err)
+		return fmt.Errorf("cannot commit marking of next runnable: %w", err)
 	}
 
 	if nextStatus == stateStatusReady {

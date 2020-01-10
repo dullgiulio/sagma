@@ -49,7 +49,7 @@ func prefixEnv(prefix string, getenv func(string) string) func(*flag.Flag) {
 			return
 		}
 		if err := f.Value.Set(val); err != nil {
-			log.Fatalf("cannot set flag from environment variable %s: %v", key, err)
+			log.Fatalf("cannot set flag from environment variable %s: %w", key, err)
 		}
 	}
 }
@@ -163,7 +163,7 @@ func stateHandler(machine *sagma.Machine, states []sagma.State) func(w http.Resp
 		id := sagma.MsgID(vars["messageID"])
 		mstates := messageStateStatuses(make(map[sagma.State]interface{}))
 		if err := machine.FetchStates(id, mstates); err != nil {
-			elog.Printf("cannot fetch message %s states: %v", id, err)
+			elog.Printf("cannot fetch message %s states: %w", id, err)
 			http.Error(w, err.Error(), httpErrorCode(err))
 			return
 		}
@@ -183,7 +183,7 @@ func stateHandler(machine *sagma.Machine, states []sagma.State) func(w http.Resp
 		}
 		enc := json.NewEncoder(w)
 		if err := enc.Encode(statuses); err != nil {
-			elog.Printf("cannot encode respose into JSON: %v", err)
+			elog.Printf("cannot encode respose into JSON: %w", err)
 			return
 		}
 		dlog.Printf("request for states of %s completed", id)
@@ -196,13 +196,13 @@ func fetchHandler(machine *sagma.Machine, state sagma.State) func(w http.Respons
 		id := sagma.MsgID(vars["messageID"])
 		body, _, err := machine.Fetch(id, state)
 		if err != nil {
-			elog.Printf("cannot fetch message %s: %v", id, err)
+			elog.Printf("cannot fetch message %s: %w", id, err)
 			http.Error(w, err.Error(), httpErrorCode(err))
 			return
 		}
 		defer body.Close()
 		if _, err := io.Copy(w, body); err != nil {
-			elog.Printf("cannot copy body to response: %v", err)
+			elog.Printf("cannot copy body to response: %w", err)
 			return
 		}
 		dlog.Printf("request for %s completed", id)
@@ -278,7 +278,7 @@ func main() {
 		store = sagma.NewMemstore()
 	}
 	if err != nil {
-		elog.Fatalf("cannot initialize %s store: %v", storeType.val, err)
+		elog.Fatalf("cannot initialize %s store: %w", storeType.val, err)
 	}
 
 	machine := sagma.NewMachine(saga, store, loggers, 10)
@@ -287,7 +287,7 @@ func main() {
 
 		ctx["executedAt"] = time.Now()
 		if err := saveCtx(ctx); err != nil {
-			return nil, fmt.Errorf("cannot save context: %v", err)
+			return nil, fmt.Errorf("cannot save context: %w", err)
 		}
 
 		return sagma.SagaNext(stateSecond), nil
@@ -297,7 +297,7 @@ func main() {
 
 		ctx["executedAt"] = time.Now()
 		if err := saveCtx(ctx); err != nil {
-			return nil, fmt.Errorf("cannot save context: %v", err)
+			return nil, fmt.Errorf("cannot save context: %w", err)
 		}
 
 		return sagma.SagaNext(stateThird), nil
@@ -305,28 +305,28 @@ func main() {
 	saga.Step(stateThird, func(id sagma.MsgID, ctx sagma.Context, body3 io.Reader, saveCtx sagma.ContextSaverFn) (*sagma.SagaStates, error) {
 		ctx["startedAt"] = time.Now()
 		if err := saveCtx(ctx); err != nil {
-			return sagma.SagaEnd, fmt.Errorf("cannot save context: %v", err)
+			return sagma.SagaEnd, fmt.Errorf("cannot save context: %w", err)
 		}
 
 		body1, _, err := machine.Fetch(id, stateFirst)
 		if err != nil {
-			return nil, fmt.Errorf("cannot fetch first message: %v", err)
+			return nil, fmt.Errorf("cannot fetch first message: %w", err)
 		}
 		defer body1.Close()
 		body2, _, err := machine.Fetch(id, stateSecond)
 		if err != nil {
-			return nil, fmt.Errorf("cannot fetch first message: %v", err)
+			return nil, fmt.Errorf("cannot fetch first message: %w", err)
 		}
 		defer body2.Close()
 		mr := io.MultiReader(body1, body2, body3)
 		if _, err := io.Copy(ioutil.Discard, mr); err != nil {
-			return nil, fmt.Errorf("cannot dump messages to output: %v", err)
+			return nil, fmt.Errorf("cannot dump messages to output: %w", err)
 		}
 		dlog.Printf("*** 3 handling third state completed %s\n", id)
 
 		ctx["finishedAt"] = time.Now()
 		if err := saveCtx(ctx); err != nil {
-			return nil, fmt.Errorf("cannot save context: %v", err)
+			return nil, fmt.Errorf("cannot save context: %w", err)
 		}
 
 		return sagma.SagaEnd, nil
@@ -336,7 +336,7 @@ func main() {
 	server := &http.Server{Addr: *listen}
 	exited := handleSigterm(func() {
 		if err := server.Shutdown(context.Background()); err != nil {
-			elog.Printf("cannot stop HTTP server: %v", err)
+			elog.Printf("cannot stop HTTP server: %w", err)
 		}
 		machine.Shutdown()
 	})
@@ -359,7 +359,7 @@ func main() {
 
 	ilog.Printf("listening on %s", *listen)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		elog.Fatalf("cannot start HTTP server: %v", err)
+		elog.Fatalf("cannot start HTTP server: %w", err)
 	}
 	<-exited
 }

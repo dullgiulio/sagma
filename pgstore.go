@@ -136,11 +136,11 @@ func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer Stor
 	queries := makePgQueries(table, timeouts.RunnableLeftBehind)
 	db, err := sql.Open("postgres", string(dsn))
 	if err != nil {
-		return nil, fmt.Errorf("cannot open database connection pool: %v", err)
+		return nil, fmt.Errorf("cannot open database connection pool: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("cannot ping database: %v", err)
+		return nil, fmt.Errorf("cannot ping database: %w", err)
 	}
 	// TODO: create table if not exists
 	return &PSQLStore{
@@ -158,23 +158,23 @@ func (s *PSQLStore) Store(transaction Transaction, id MsgID, body io.Reader, st 
 	basename := s.folder.basename(id)
 	filename := s.folder.file(s.streamer, st, basename)
 	if err := os.MkdirAll(filepath.Dir(string(filename)), 0744); err != nil {
-		return fmt.Errorf("cannot make message folder in blob store: %v", err)
+		return fmt.Errorf("cannot make message folder in blob store: %w", err)
 	}
 	if err := writeFile(s.streamer, filename, body, 0644); err != nil {
-		return fmt.Errorf("cannot write file to blob store: %v", err)
+		return fmt.Errorf("cannot write file to blob store: %w", err)
 	}
 	t := transaction.(*txSQL)
 	t.onDiscard(func() {
 		if err := os.Remove(filename); err != nil {
-			s.log.err.Printf("message %s at state %s in status %s: cannot remove file %s on transaction rollback: %v", id, st, status, filename, err)
+			s.log.err.Printf("message %s at state %s in status %s: cannot remove file %s on transaction rollback: %w", id, st, status, filename, err)
 		}
 	})
 	ctxJSON, err := json.Marshal(ctx)
 	if err != nil {
-		return fmt.Errorf("cannot marshal JSON context: %v", err)
+		return fmt.Errorf("cannot marshal JSON context: %w", err)
 	}
 	if _, err := s.queries.insertNewContext(t.tx, id, st, status, basename, string(ctxJSON)); err != nil {
-		return fmt.Errorf("cannot insert message %s: %v", id, err)
+		return fmt.Errorf("cannot insert message %s: %w", id, err)
 	}
 	return nil
 }
@@ -183,15 +183,15 @@ func (s *PSQLStore) StoreContext(transaction Transaction, id MsgID, st State, ct
 	t := transaction.(*txSQL)
 	ctxJSON, err := json.Marshal(ctx)
 	if err != nil {
-		return fmt.Errorf("cannot marshall JSON from handler: %v", err)
+		return fmt.Errorf("cannot marshall JSON from handler: %w", err)
 	}
 	res, err := s.queries.updateContext(t.tx, id, st, string(ctxJSON))
 	if err != nil {
-		return fmt.Errorf("cannot run update query for context: %v", err)
+		return fmt.Errorf("cannot run update query for context: %w", err)
 	}
 	nrows, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("cannot get rows affected: %v", err)
+		return fmt.Errorf("cannot get rows affected: %w", err)
 	}
 	if nrows == 0 {
 		return fmt.Errorf("context for message %s at status %s was not updated", id, st)
@@ -202,7 +202,7 @@ func (s *PSQLStore) StoreContext(transaction Transaction, id MsgID, st State, ct
 func (s *PSQLStore) Fail(transaction Transaction, id MsgID, st State, reason error) error {
 	t := transaction.(*txSQL)
 	if _, err := s.queries.updateFailure(t.tx, id, st, reason); err != nil {
-		return fmt.Errorf("cannot set error in database for message %s in state %s: %v", id, st, err)
+		return fmt.Errorf("cannot set error in database for message %s in state %s: %w", id, st, err)
 	}
 	return nil
 }
@@ -211,7 +211,7 @@ func (s *PSQLStore) FetchStates(transaction Transaction, id MsgID, visitor Messa
 	t := transaction.(*txSQL)
 	rows, err := s.queries.allByID(t.tx, id) // TODO: bind to query the returned fields for Scan
 	if err != nil {
-		return fmt.Errorf("cannot get all states for message %s: %v", id, err)
+		return fmt.Errorf("cannot get all states for message %s: %w", id, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -223,11 +223,11 @@ func (s *PSQLStore) FetchStates(transaction Transaction, id MsgID, visitor Messa
 			ctxRaw            []byte
 		)
 		if err := rows.Scan(&state, &status, &created, &modified, &failure, &ctxRaw); err != nil {
-			return fmt.Errorf("cannot scan row for message statuses: %v", err)
+			return fmt.Errorf("cannot scan row for message statuses: %w", err)
 		}
 		ctx := NewContext()
 		if err := json.Unmarshal(ctxRaw, &ctx); err != nil {
-			return fmt.Errorf("cannot unmarshal context JSON: %v", err)
+			return fmt.Errorf("cannot unmarshal context JSON: %w", err)
 		}
 		if failure != "" {
 			if err := visitor.Failed(id, State(state), errors.New(failure), ctx); err != nil {
@@ -240,7 +240,7 @@ func (s *PSQLStore) FetchStates(transaction Transaction, id MsgID, visitor Messa
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("cannot scan rows for message statuses: %v", err)
+		return fmt.Errorf("cannot scan rows for message statuses: %w", err)
 	}
 	return nil
 }
@@ -253,21 +253,21 @@ func (s *PSQLStore) Fetch(transaction Transaction, id MsgID, state State, status
 		if err == sql.ErrNoRows {
 			return nil, nil, fmt.Errorf("cannot get message %s at state %s in status %s: no such entry in DB", id, state, status)
 		}
-		return nil, nil, fmt.Errorf("cannot scan row for message status: %v", err)
+		return nil, nil, fmt.Errorf("cannot scan row for message status: %w", err)
 	}
 	ctx := NewContext()
 	if err := json.Unmarshal(ctxRaw, &ctx); err != nil {
-		return nil, nil, fmt.Errorf("cannot unmarshal context from database: %v", err)
+		return nil, nil, fmt.Errorf("cannot unmarshal context from database: %w", err)
 	}
 	basename := s.folder.basename(id)
 	filename := s.folder.file(s.streamer, state, basename)
 	fh, err := os.Open(filename)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot open blob store file: %v", err)
+		return nil, nil, fmt.Errorf("cannot open blob store file: %w", err)
 	}
 	r, err := s.streamer.Reader(fh)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot wrap reader with streamer: %v", err)
+		return nil, nil, fmt.Errorf("cannot wrap reader with streamer: %w", err)
 	}
 	return r, ctx, nil
 }
@@ -277,17 +277,17 @@ func (s *PSQLStore) StoreStateStatus(transaction Transaction, id MsgID, st State
 	if currStatus == stateStatusWaiting {
 		basename := s.folder.basename(id)
 		if _, err := s.queries.insertNew(t.tx, id, st, nextStatus, basename); err != nil {
-			return fmt.Errorf("cannot insert placeholder for message %s at state %s in status %v: %v", id, st, currStatus, err)
+			return fmt.Errorf("cannot insert placeholder for message %s at state %s in status %v: %w", id, st, currStatus, err)
 		}
 		return nil
 	}
 	res, err := s.queries.updateStatus(t.tx, nextStatus, id, st, currStatus)
 	if err != nil {
-		return fmt.Errorf("cannot update message %s at state %s from status %s: %v", id, st, currStatus, err)
+		return fmt.Errorf("cannot update message %s at state %s from status %s: %w", id, st, currStatus, err)
 	}
 	nrows, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("cannot get rows affected: %v", err)
+		return fmt.Errorf("cannot get rows affected: %w", err)
 	}
 	if nrows == 0 {
 		return fmt.Errorf("message %s at status %s was not updated", id, currStatus)
@@ -299,11 +299,11 @@ func (s *PSQLStore) Archive(transaction Transaction, id MsgID) error {
 	t := transaction.(*txSQL)
 	res, err := s.queries.archive(t.tx, id)
 	if err != nil {
-		return fmt.Errorf("cannot archive message %s: %v", id, err)
+		return fmt.Errorf("cannot archive message %s: %w", id, err)
 	}
 	nrows, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("cannot get rows affected: %v", err)
+		return fmt.Errorf("cannot get rows affected: %w", err)
 	}
 	if nrows < int64(len(s.states)) {
 		return fmt.Errorf("archiving of message %s changes %d states, but should have changed %d", id, nrows, len(s.states))
@@ -315,17 +315,17 @@ func (s *PSQLStore) FetchStateStatus(transaction Transaction, id MsgID, state St
 	t := transaction.(*txSQL)
 	rows, err := s.queries.getByState(t.tx, id, state)
 	if err != nil {
-		return stateStatusWaiting, fmt.Errorf("cannot get current status of message %s at state %s: %v", id, state, err)
+		return stateStatusWaiting, fmt.Errorf("cannot get current status of message %s at state %s: %w", id, state, err)
 	}
 	defer rows.Close()
 	var status StateStatus
 	for rows.Next() {
 		if err := rows.Scan(&status); err != nil {
-			return stateStatusWaiting, fmt.Errorf("cannot scan result row: %v", err)
+			return stateStatusWaiting, fmt.Errorf("cannot scan result row: %w", err)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return stateStatusWaiting, fmt.Errorf("cannot scan result rows: %v", err)
+		return stateStatusWaiting, fmt.Errorf("cannot scan result rows: %w", err)
 	}
 	if !status.IsValid() {
 		return stateStatusWaiting, fmt.Errorf("invalid status %s retrieved from database", status)
@@ -338,12 +338,12 @@ func (s *PSQLStore) PollRunnables(ids chan<- StateID) error {
 	for {
 		tx, err := s.db.Begin()
 		if err != nil {
-			return fmt.Errorf("cannot create runnables transaction: %v", err)
+			return fmt.Errorf("cannot create runnables transaction: %w", err)
 		}
 		defer tx.Commit() // Ignore errors, we only read
 		rows, err := s.queries.allByStatus(tx, stateStatusReady)
 		if err != nil {
-			return fmt.Errorf("cannot query for runnables: %v", err)
+			return fmt.Errorf("cannot query for runnables: %w", err)
 		}
 		defer rows.Close()
 		for rows.Next() {
@@ -352,13 +352,13 @@ func (s *PSQLStore) PollRunnables(ids chan<- StateID) error {
 				state State
 			)
 			if err := rows.Scan(&id, &state); err != nil {
-				return fmt.Errorf("cannot scan for runnable row: %v", err)
+				return fmt.Errorf("cannot scan for runnable row: %w", err)
 			}
 			foundEntries = true
 			ids <- StateID{id: id, state: state}
 		}
 		if err := rows.Err(); err != nil {
-			return fmt.Errorf("cannot scan for runnables rows: %v", err)
+			return fmt.Errorf("cannot scan for runnables rows: %w", err)
 		}
 		// if nothing was found, stop polling; entries get left behind only when
 		// the process terminates. A new process will pick up the leftovers we leave on shutdown.
@@ -381,7 +381,7 @@ func (t *txSQL) onDiscard(fn func()) {
 func (s *PSQLStore) Transaction(id MsgID) (Transaction, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return nil, fmt.Errorf("cannot create transaction: %v", err)
+		return nil, fmt.Errorf("cannot create transaction: %w", err)
 	}
 	return &txSQL{tx: tx}, nil
 }
@@ -391,14 +391,14 @@ func (t *txSQL) Discard(err error) error {
 		fn()
 	}
 	if err := t.tx.Rollback(); err != nil {
-		return fmt.Errorf("cannot rollback transaction: %v", err)
+		return fmt.Errorf("cannot rollback transaction: %w", err)
 	}
 	return err
 }
 
 func (t *txSQL) Commit() error {
 	if err := t.tx.Commit(); err != nil {
-		return fmt.Errorf("cannot commit transaction: %v", err)
+		return fmt.Errorf("cannot commit transaction: %w", err)
 	}
 	return nil
 }

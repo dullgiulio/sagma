@@ -58,7 +58,7 @@ func (ZlibStreamer) Writer(w io.WriteCloser) (io.WriteCloser, error) {
 func (ZlibStreamer) Reader(r io.ReadCloser) (io.ReadCloser, error) {
 	zr, err := zlib.NewReader(r)
 	if err != nil {
-		return nil, fmt.Errorf("cannot start zlib decompressor on contents file: %v", err)
+		return nil, fmt.Errorf("cannot start zlib decompressor on contents file: %w", err)
 	}
 	return zr, nil
 }
@@ -76,7 +76,7 @@ func (GzipStreamer) Writer(w io.WriteCloser) (io.WriteCloser, error) {
 func (GzipStreamer) Reader(r io.ReadCloser) (io.ReadCloser, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
-		return nil, fmt.Errorf("cannot start zlib decompressor on contents file: %v", err)
+		return nil, fmt.Errorf("cannot start zlib decompressor on contents file: %w", err)
 	}
 	return zr, nil
 }

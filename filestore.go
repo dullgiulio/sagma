@@ -64,7 +64,7 @@ func (f fileprefix) createAllFolders(statuses []StateStatus, states []State) err
 	for _, status := range statuses {
 		for _, state := range states {
 			if err := os.MkdirAll(string(f.stateFolder(state, status)), 0744); err != nil {
-				return fmt.Errorf("cannot create folder for state %s at status %s: %v", state, status, err)
+				return fmt.Errorf("cannot create folder for state %s at status %s: %w", state, status, err)
 			}
 		}
 	}
@@ -79,14 +79,14 @@ func (f stateFolder) scan(state State, ids chan<- StateID, batchSize int) error 
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("cannot read runnables folder: %v", err)
+		return fmt.Errorf("cannot read runnables folder: %w", err)
 	}
 	defer dh.Close()
 
 	for {
 		names, err := dh.Readdirnames(batchSize)
 		if err != nil && err != io.EOF {
-			return fmt.Errorf("cannot read batch of runnable folder names: %v", err)
+			return fmt.Errorf("cannot read batch of runnable folder names: %w", err)
 		}
 
 		// TODO: move to statistics system
@@ -118,7 +118,7 @@ func NewFilestore(log *Loggers, prefix string, states []State, streamer StoreStr
 	}
 	fprefix := fileprefix(prefix)
 	if err := fprefix.createAllFolders(stateStatuses, states); err != nil {
-		return nil, fmt.Errorf("cannot initialize file store folders: %v", err)
+		return nil, fmt.Errorf("cannot initialize file store folders: %w", err)
 	}
 
 	contentFilename := streamer.Filename("contents")
@@ -150,14 +150,14 @@ func (f *Filestore) cleanWaitingStates(id MsgID, state State) error {
 func (f *Filestore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus, ctx Context) error {
 	folder := f.prefix.messageFolder(id, st, status)
 	if err := os.MkdirAll(string(folder), 0744); err != nil {
-		return fmt.Errorf("cannot make message folder: %v", err)
+		return fmt.Errorf("cannot make message folder: %w", err)
 	}
 	if err := writeFile(f.streamer, folder.contentsFile(f.contentFilename), body, 0644); err != nil {
-		return fmt.Errorf("cannot write contents file: %v", err)
+		return fmt.Errorf("cannot write contents file: %w", err)
 	}
 	if status == stateStatusReady {
 		if err := f.cleanWaitingStates(id, st); err != nil {
-			return fmt.Errorf("cannot clean readiness marker: %v", err)
+			return fmt.Errorf("cannot clean readiness marker: %w", err)
 		}
 	}
 	return nil
@@ -172,10 +172,10 @@ func (f *Filestore) Fail(tx Transaction, id MsgID, st State, reason error) error
 	folder := f.prefix.messageFolder(id, st, stateStatusError)
 	file := folder.contentsFile("error")
 	if err := os.MkdirAll(string(folder), 0744); err != nil {
-		return fmt.Errorf("cannot make message folder for failure result: %v", err)
+		return fmt.Errorf("cannot make message folder for failure result: %w", err)
 	}
 	if err := ioutil.WriteFile(file, []byte(reason.Error()), 0644); err != nil {
-		return fmt.Errorf("cannot write contents file failure result: %v", err)
+		return fmt.Errorf("cannot write contents file failure result: %w", err)
 	}
 	// TODO: write context file
 	return nil
@@ -198,7 +198,7 @@ func (f *Filestore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor
 			folder := f.prefix.messageFolder(id, state, status)
 			exists, err := stat(folder.contentsFile(f.contentFilename))
 			if err != nil {
-				return fmt.Errorf("cannot stat message file to get statuses: %v", err)
+				return fmt.Errorf("cannot stat message file to get statuses: %w", err)
 			}
 			if exists {
 				if err := visitor.Visit(id, state, status, ctx); err != nil {
@@ -210,7 +210,7 @@ func (f *Filestore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor
 				if os.IsNotExist(err) {
 					continue
 				}
-				return fmt.Errorf("cannot read error file: %v", err)
+				return fmt.Errorf("cannot read error file: %w", err)
 			}
 			if err := visitor.Failed(id, state, errors.New(string(contents)), ctx); err != nil {
 				return err
@@ -225,11 +225,11 @@ func (f *Filestore) Fetch(tx Transaction, id MsgID, state State, status StateSta
 	file := folder.contentsFile(f.contentFilename)
 	fh, err := os.Open(file)
 	if err != nil {
-		return nil, nil, NotFoundError(fmt.Errorf("cannot read message contents: %v", err))
+		return nil, nil, NotFoundError(fmt.Errorf("cannot read message contents: %w", err))
 	}
 	r, err := f.streamer.Reader(fh)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot wrap reader with streamer: %v", err)
+		return nil, nil, fmt.Errorf("cannot wrap reader with streamer: %w", err)
 	}
 	ctx := Context(make(map[string]interface{})) // TODO: decode from context file
 	return r, ctx, nil
@@ -239,17 +239,17 @@ func (f *Filestore) StoreStateStatus(tx Transaction, id MsgID, st State, currSta
 	if currStatus == stateStatusWaiting {
 		folder := f.prefix.messageFolder(id, st, nextStatus)
 		if err := os.MkdirAll(string(folder), 0744); err != nil {
-			return fmt.Errorf("cannot make message folder for status change: %v", err)
+			return fmt.Errorf("cannot make message folder for status change: %w", err)
 		}
 		if err := ioutil.WriteFile(folder.contentsFile(f.contentFilename), []byte(""), 0644); err != nil {
-			return fmt.Errorf("cannot write contents file for status change: %v", err)
+			return fmt.Errorf("cannot write contents file for status change: %w", err)
 		}
 		return nil
 	}
 	from := f.prefix.messageFolder(id, st, currStatus)
 	to := f.prefix.messageFolder(id, st, nextStatus)
 	if err := os.Rename(string(from), string(to)); err != nil {
-		return fmt.Errorf("cannot rename folder for status change: %v", err)
+		return fmt.Errorf("cannot rename folder for status change: %w", err)
 	}
 	return nil
 }
@@ -282,7 +282,7 @@ func (f *Filestore) PollRunnables(ids chan<- StateID) error {
 		folder := f.prefix.stateFolder(st, stateStatusReady)
 		go func(st State, folder stateFolder) {
 			if err := folder.scan(st, ids, 100); err != nil {
-				f.log.err.Printf("cannot scan runnable for state %s: %v", st, err)
+				f.log.err.Printf("cannot scan runnable for state %s: %w", st, err)
 			}
 			wg.Done()
 		}(st, folder)
