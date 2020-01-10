@@ -1,48 +1,14 @@
 package sagma
 
 import (
-	"crypto/sha1"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"sync"
 	"time"
 
 	_ "github.com/lib/pq"
 )
-
-type psqlTx struct {
-	txs map[MsgID]*sql.Tx
-	mux sync.Mutex
-}
-
-type blobBasename string
-
-type blobFolder string
-
-func (b blobFolder) basename(id MsgID) blobBasename {
-	return blobBasename(fmt.Sprintf("%x", sha1.Sum([]byte(id))))
-}
-
-func (b blobFolder) file(streamer StoreStreamer, state State, name blobBasename) string {
-	return filepath.Join(string(b), string(state), string(name[0:2]), streamer.Filename(string(name)))
-}
-
-type PSQLConnString string
-
-type PSQLStore struct {
-	log      *Loggers
-	db       *sql.DB
-	table    string
-	folder   blobFolder
-	streamer StoreStreamer
-	queries  pgQueries
-	states   []State
-}
 
 type pgQueries struct {
 	pgQueryINSERT         string
@@ -58,12 +24,12 @@ type pgQueries struct {
 }
 
 const (
-	_pgQueryINSERT         = `INSERT INTO %s (id, state, status, created, modified, fileid) VALUES ($1, $2, $3, NOW(), NOW(), $4) ON CONFLICT (id, state) DO UPDATE SET status = EXCLUDED.status;`
+	_pgQueryINSERT         = `INSERT INTO %s (id, state, status, created, modified) VALUES ($1, $2, $3, NOW(), NOW()) ON CONFLICT (id, state) DO UPDATE SET status = EXCLUDED.status;`
 	_pgQueryINSERTctx      = `INSERT INTO %s (id, state, status, created, modified, fileid, context) VALUES ($1, $2, $3, NOW(), NOW(), $4, $5::jsonb) ON CONFLICT (id, state) DO UPDATE SET status = EXCLUDED.status, context = EXCLUDED.context;`
 	_pgQueryFailUPDATE     = `UPDATE %s SET failed = $1, modified = NOW() WHERE id = $2 AND state = $3;`
 	_pgQueryUPDATE         = `UPDATE %s SET status = $1, modified = NOW() WHERE id = $2 AND state = $3 AND status = $4;`
 	_pgQuerySaveCtx        = `UPDATE %s SET context = $1::jsonb WHERE id = $2 AND state = $3;`
-	_pgQueryGetStateStatus = `SELECT context FROM %s WHERE id = $1 AND state = $2 AND status = $3 LIMIT 1;`
+	_pgQueryGetStateStatus = `SELECT COALESCE(fileid, ''), context FROM %s WHERE id = $1 AND state = $2 AND status = $3 LIMIT 1;`
 	_pgQueryAllByID        = `SELECT COALESCE(state, ''), COALESCE(status, ''), created, modified, COALESCE(error, ''), context FROM %s WHERE id = $1;`
 	_pgQueryGetStatus      = `SELECT COALESCE(status, '') FROM %s WHERE id = $1 AND state = $2 LIMIT 1;`
 	_pgQueryRunnables      = `SELECT id, state FROM %s WHERE status = $1 AND modified < NOW() - INTERVAL '%d seconds' LIMIT 100;`
@@ -89,12 +55,12 @@ func (q *pgQueries) archive(tx *sql.Tx, id MsgID) (sql.Result, error) {
 	return tx.Exec(q.pgQueryArchive, stateStatusArchived, id, stateStatusDone)
 }
 
-func (q *pgQueries) insertNew(tx *sql.Tx, id MsgID, state State, status StateStatus, basename blobBasename) (sql.Result, error) {
-	return tx.Exec(q.pgQueryINSERT, string(id), string(state), string(status), string(basename))
+func (q *pgQueries) insertNew(tx *sql.Tx, id MsgID, state State, status StateStatus) (sql.Result, error) {
+	return tx.Exec(q.pgQueryINSERT, string(id), string(state), string(status))
 }
 
-func (q *pgQueries) insertNewContext(tx *sql.Tx, id MsgID, state State, status StateStatus, basename blobBasename, ctx string) (sql.Result, error) {
-	return tx.Exec(q.pgQueryINSERTctx, string(id), string(state), string(status), string(basename), ctx)
+func (q *pgQueries) insertNewContext(tx *sql.Tx, id MsgID, state State, status StateStatus, blobID BlobID, ctx string) (sql.Result, error) {
+	return tx.Exec(q.pgQueryINSERTctx, string(id), string(state), string(status), string(blobID), ctx)
 }
 
 func (q *pgQueries) updateFailure(tx *sql.Tx, id MsgID, state State, reason error) (sql.Result, error) {
@@ -122,14 +88,21 @@ func (q *pgQueries) getByState(tx *sql.Tx, id MsgID, state State) (*sql.Rows, er
 	return tx.Query(q.pgQueryGetStatus, string(id), string(state))
 }
 
-func (q *pgQueries) contextAtStateStatus(tx *sql.Tx, id MsgID, state State, status StateStatus) *sql.Row {
+func (q *pgQueries) contextAndBlobIDAtStateStatus(tx *sql.Tx, id MsgID, state State, status StateStatus) *sql.Row {
 	return tx.QueryRow(q.pgQueryGetStateStatus, string(id), string(state), string(status))
 }
 
-func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer StoreStreamer, table string, timeouts *Timeouts, states []State) (*PSQLStore, error) {
-	if streamer == nil {
-		streamer = NopStreamer{}
-	}
+type PSQLConnString string
+
+type PSQLStore struct {
+	log     *Loggers
+	db      *sql.DB
+	table   string
+	queries pgQueries
+	states  []State
+}
+
+func NewPSQLStore(log *Loggers, dsn PSQLConnString, table string, timeouts *Timeouts, states []State) (*PSQLStore, error) {
 	if table == "" {
 		table = "sagma_messages"
 	}
@@ -144,36 +117,21 @@ func NewPSQLStore(log *Loggers, dsn PSQLConnString, folder string, streamer Stor
 	}
 	// TODO: create table if not exists
 	return &PSQLStore{
-		log:      log,
-		db:       db,
-		table:    table,
-		folder:   blobFolder(folder),
-		streamer: streamer,
-		queries:  queries,
-		states:   states,
+		log:     log,
+		db:      db,
+		table:   table,
+		queries: queries,
+		states:  states,
 	}, nil
 }
 
-func (s *PSQLStore) Store(transaction Transaction, id MsgID, body io.Reader, st State, status StateStatus, ctx Context) error {
-	basename := s.folder.basename(id)
-	filename := s.folder.file(s.streamer, st, basename)
-	if err := os.MkdirAll(filepath.Dir(string(filename)), 0744); err != nil {
-		return fmt.Errorf("cannot make message folder in blob store: %w", err)
-	}
-	if err := writeFile(s.streamer, filename, body, 0644); err != nil {
-		return fmt.Errorf("cannot write file to blob store: %w", err)
-	}
+func (s *PSQLStore) Store(transaction Transaction, id MsgID, blobID BlobID, st State, status StateStatus, ctx Context) error {
 	t := transaction.(*txSQL)
-	t.onDiscard(func() {
-		if err := os.Remove(filename); err != nil {
-			s.log.err.Printf("message %s at state %s in status %s: cannot remove file %s on transaction rollback: %w", id, st, status, filename, err)
-		}
-	})
 	ctxJSON, err := json.Marshal(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot marshal JSON context: %w", err)
 	}
-	if _, err := s.queries.insertNewContext(t.tx, id, st, status, basename, string(ctxJSON)); err != nil {
+	if _, err := s.queries.insertNewContext(t.tx, id, st, status, blobID, string(ctxJSON)); err != nil {
 		return fmt.Errorf("cannot insert message %s: %w", id, err)
 	}
 	return nil
@@ -218,9 +176,9 @@ func (s *PSQLStore) FetchStates(transaction Transaction, id MsgID, visitor Messa
 		var (
 			state             string
 			status            string
-			created, modified time.Time
 			failure           string
 			ctxRaw            []byte
+			created, modified time.Time
 		)
 		if err := rows.Scan(&state, &status, &created, &modified, &failure, &ctxRaw); err != nil {
 			return fmt.Errorf("cannot scan row for message statuses: %w", err)
@@ -245,38 +203,32 @@ func (s *PSQLStore) FetchStates(transaction Transaction, id MsgID, visitor Messa
 	return nil
 }
 
-func (s *PSQLStore) Fetch(transaction Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, Context, error) {
+func (s *PSQLStore) Fetch(transaction Transaction, id MsgID, state State, status StateStatus) (BlobID, Context, error) {
+	var blobID BlobID
 	t := transaction.(*txSQL)
-	row := s.queries.contextAtStateStatus(t.tx, id, state, status)
-	var ctxRaw []byte
-	if err := row.Scan(&ctxRaw); err != nil {
+	row := s.queries.contextAndBlobIDAtStateStatus(t.tx, id, state, status)
+	var (
+		blobRaw string
+		ctxRaw  []byte
+	)
+	if err := row.Scan(&blobRaw, &ctxRaw); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil, fmt.Errorf("cannot get message %s at state %s in status %s: no such entry in DB", id, state, status)
+			return blobID, nil, fmt.Errorf("cannot get message %s at state %s in status %s: no such entry in DB", id, state, status)
 		}
-		return nil, nil, fmt.Errorf("cannot scan row for message status: %w", err)
+		return blobID, nil, fmt.Errorf("cannot scan row for message status: %w", err)
 	}
+	blobID = BlobID(blobRaw)
 	ctx := NewContext()
 	if err := json.Unmarshal(ctxRaw, &ctx); err != nil {
-		return nil, nil, fmt.Errorf("cannot unmarshal context from database: %w", err)
+		return blobID, nil, fmt.Errorf("cannot unmarshal context from database: %w", err)
 	}
-	basename := s.folder.basename(id)
-	filename := s.folder.file(s.streamer, state, basename)
-	fh, err := os.Open(filename)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot open blob store file: %w", err)
-	}
-	r, err := s.streamer.Reader(fh)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot wrap reader with streamer: %w", err)
-	}
-	return r, ctx, nil
+	return blobID, ctx, nil
 }
 
 func (s *PSQLStore) StoreStateStatus(transaction Transaction, id MsgID, st State, currStatus, nextStatus StateStatus) error {
 	t := transaction.(*txSQL)
 	if currStatus == stateStatusWaiting {
-		basename := s.folder.basename(id)
-		if _, err := s.queries.insertNew(t.tx, id, st, nextStatus, basename); err != nil {
+		if _, err := s.queries.insertNew(t.tx, id, st, nextStatus); err != nil {
 			return fmt.Errorf("cannot insert placeholder for message %s at state %s in status %v: %w", id, st, currStatus, err)
 		}
 		return nil
@@ -370,12 +322,7 @@ func (s *PSQLStore) PollRunnables(ids chan<- StateID) error {
 }
 
 type txSQL struct {
-	tx       *sql.Tx
-	rollback []func()
-}
-
-func (t *txSQL) onDiscard(fn func()) {
-	t.rollback = append(t.rollback, fn)
+	tx *sql.Tx
 }
 
 func (s *PSQLStore) Transaction(id MsgID) (Transaction, error) {
@@ -387,9 +334,6 @@ func (s *PSQLStore) Transaction(id MsgID) (Transaction, error) {
 }
 
 func (t *txSQL) Discard(err error) error {
-	for _, fn := range t.rollback {
-		fn()
-	}
 	if err := t.tx.Rollback(); err != nil {
 		return fmt.Errorf("cannot rollback transaction: %w", err)
 	}

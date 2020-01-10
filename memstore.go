@@ -8,39 +8,83 @@ import (
 	"sync"
 )
 
+var _ BlobStore = NewBlobMemstore()
+
+type BlobMemstore struct {
+	mux    sync.Mutex
+	values map[BlobID][]byte
+}
+
+func NewBlobMemstore() *BlobMemstore {
+	return &BlobMemstore{
+		values: make(map[BlobID][]byte),
+	}
+}
+
+func (b *BlobMemstore) Put(id MsgID, state State, body io.Reader) (BlobID, error) {
+	blobID := blobStoreID(id, state)
+	data, err := ioutil.ReadAll(body)
+	if err != nil {
+		return blobID, fmt.Errorf("cannot read full body into memory: %w", err)
+	}
+
+	b.mux.Lock()
+	b.values[blobID] = data
+	b.mux.Unlock()
+
+	return blobID, nil
+}
+
+func (b *BlobMemstore) Get(id MsgID, state State) (io.ReadCloser, error) {
+	blobID := blobStoreID(id, state)
+
+	b.mux.Lock()
+	defer b.mux.Unlock()
+
+	bs, ok := b.values[blobID]
+	if !ok {
+		return nil, fmt.Errorf("blob of key %s does not exist", blobID)
+	}
+	return ioutil.NopCloser(bytes.NewReader(bs)), nil
+}
+
+func (b *BlobMemstore) Delete(blobID BlobID) error {
+	b.mux.Lock()
+	delete(b.values, blobID)
+	b.mux.Unlock()
+
+	return nil
+}
+
 var _ Store = NewMemstore()
 
 type Memstore struct {
 	mux            sync.Mutex
-	statusStateMsg map[StateStatus]map[State]map[MsgID][]byte
+	statusStateMsg map[StateStatus]map[State]map[MsgID]BlobID
 }
 
 func NewMemstore() *Memstore {
 	return &Memstore{
-		statusStateMsg: make(map[StateStatus]map[State]map[MsgID][]byte),
+		statusStateMsg: make(map[StateStatus]map[State]map[MsgID]BlobID),
 	}
 }
 
 // TODO: support context
-func (m *Memstore) Store(tx Transaction, id MsgID, body io.Reader, st State, status StateStatus, ctx Context) error {
+func (m *Memstore) Store(tx Transaction, id MsgID, blobID BlobID, st State, status StateStatus, ctx Context) error {
 	stateMsg, ok := m.statusStateMsg[status]
 	if !ok {
-		stateMsg = make(map[State]map[MsgID][]byte)
+		stateMsg = make(map[State]map[MsgID]BlobID)
 		m.statusStateMsg[status] = stateMsg
 	}
 	msgs, ok := stateMsg[st]
 	if !ok {
-		msgs = make(map[MsgID][]byte)
+		msgs = make(map[MsgID]BlobID)
 		stateMsg[st] = msgs
 	}
 	if _, ok = msgs[id]; ok {
 		return fmt.Errorf("message %s already in store at state %s in status %s", id, st, status)
 	}
-	buf, err := ioutil.ReadAll(body)
-	if err != nil {
-		return fmt.Errorf("could not copy body: %v", err)
-	}
-	msgs[id] = buf
+	msgs[id] = blobID
 	return nil
 }
 
@@ -66,52 +110,54 @@ func (m *Memstore) FetchStates(tx Transaction, id MsgID, visitor MessageVisitor)
 	return nil
 }
 
-func (m *Memstore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, Context, error) {
-	buf := func() []byte {
+func (m *Memstore) Fetch(tx Transaction, id MsgID, state State, status StateStatus) (BlobID, Context, error) {
+	blobID, ok := func() (BlobID, bool) {
 		stateMsg, ok := m.statusStateMsg[status]
 		if !ok {
-			return nil
+			return "", false
 		}
 		msgs, ok := stateMsg[state]
 		if !ok {
-			return nil
+			return "", false
 		}
-		return msgs[id]
+		return msgs[id], true
 	}()
-	if buf == nil {
-		return nil, nil, NotFoundError(fmt.Errorf("message %s not found at state %s in status %s", id, state, status))
+	if !ok {
+		return blobID, nil, NotFoundError(fmt.Errorf("message %s not found at state %s in status %s", id, state, status))
 	}
 	ctx := Context(make(map[string]interface{})) // TODO: fetch
-	return ioutil.NopCloser(bytes.NewReader(buf)), ctx, nil
+	return blobID, ctx, nil
 }
 
 func (m *Memstore) StoreStateStatus(tx Transaction, id MsgID, st State, currStatus, nextStatus StateStatus) error {
-	removeCurrent := func() []byte {
+	// move from one map to the other
+	msg, ok := func() (BlobID, bool) {
 		stateMsg, ok := m.statusStateMsg[currStatus]
 		if !ok {
-			return nil
+			return "", false
 		}
 		msgs, ok := stateMsg[st]
 		if !ok {
-			return nil
+			return "", false
 		}
 		msg, ok := msgs[id]
 		if !ok {
-			return nil
+			return "", false
 		}
 		delete(msgs, id)
-		return msg
+		return msg, true
+	}()
+	if !ok {
+		return fmt.Errorf("cannot move message marker from state %s", currStatus)
 	}
-	// move from one map to the other
-	msg := removeCurrent()
 	stateMsg, ok := m.statusStateMsg[nextStatus]
 	if !ok {
-		stateMsg = make(map[State]map[MsgID][]byte)
+		stateMsg = make(map[State]map[MsgID]BlobID)
 		m.statusStateMsg[nextStatus] = stateMsg
 	}
 	msgs, ok := stateMsg[st]
 	if !ok {
-		msgs = make(map[MsgID][]byte)
+		msgs = make(map[MsgID]BlobID)
 		stateMsg[st] = msgs
 	}
 	msgs[id] = msg

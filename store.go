@@ -1,6 +1,8 @@
 package sagma
 
 import (
+	"crypto/sha1"
+	"fmt"
 	"io"
 )
 
@@ -19,16 +21,28 @@ func NewContext() Context {
 // Function to be used by handlers to save context
 type ContextSaverFn func(Context) error
 
+type BlobID string
+
+type BlobStore interface {
+	Put(id MsgID, state State, body io.Reader) (BlobID, error)
+	Get(id MsgID, state State) (io.ReadCloser, error)
+	Delete(blobID BlobID) error
+}
+
+func blobStoreID(id MsgID, state State) BlobID {
+	return BlobID(fmt.Sprintf("%x", sha1.Sum([]byte(string(id)+"-"+string(state)))))
+}
+
 type Store interface {
 	// Returns an opened transaction
 	Transaction(id MsgID) (Transaction, error)
 
 	// Store a message within a transaction; must reject duplicate messages for a state
-	Store(tx Transaction, id MsgID, body io.Reader, state State, status StateStatus, ctx Context) error
+	Store(tx Transaction, id MsgID, blobID BlobID, state State, status StateStatus, ctx Context) error
 	// Fetch message at a specific state
 	// The machine will surround this call with a transaction, thus the body reader
 	// returned must be available after the transaction is closed.
-	Fetch(tx Transaction, id MsgID, state State, status StateStatus) (io.ReadCloser, Context, error)
+	Fetch(tx Transaction, id MsgID, state State, status StateStatus) (BlobID, Context, error)
 
 	// Persist context up to this point in a handler
 	StoreContext(tx Transaction, id MsgID, state State, ctx Context) error

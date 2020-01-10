@@ -24,10 +24,11 @@ func TestOrderMessages(t *testing.T) {
 	//stateSecondHalf := State("second-state-half")
 	stateThird := State("third-state")
 
+	blobs := NewBlobMemstore()
 	store := NewMemstore()
 
 	send := func(wg *sync.WaitGroup, machine *Machine, state State, id MsgID, body io.ReadCloser) {
-		if err := machine.Receive(id, body, state, NewContext()); err != nil {
+		if err := machine.Receive(id, state, NewContext(), body); err != nil {
 			t.Fatalf("cannot send message: %v\n", err)
 		}
 		wg.Done()
@@ -41,8 +42,8 @@ func TestOrderMessages(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(6) // three steps, three sends
 
-	machine := NewMachine(saga, store, loggers, 10)
-	saga.Begin(stateFirst, func(id MsgID, ctx Context, body io.Reader, saveCtx ContextSaverFn) (SagaStates, error) {
+	machine := NewMachine(saga, store, blobs, loggers, 10)
+	saga.Begin(stateFirst, func(id MsgID, ctx Context, body io.Reader, saveCtx ContextSaverFn) (*SagaStates, error) {
 		defer wg.Done()
 
 		expectedState := <-expectedStates
@@ -60,7 +61,7 @@ func TestOrderMessages(t *testing.T) {
 			return SagaEnd, nil
 		})
 	*/
-	saga.Step(stateSecond, func(id MsgID, ctx Context, body io.Reader, saveCtx ContextSaverFn) (SagaStates, error) {
+	saga.Step(stateSecond, func(id MsgID, ctx Context, body io.Reader, saveCtx ContextSaverFn) (*SagaStates, error) {
 		defer wg.Done()
 
 		expectedState := <-expectedStates
@@ -70,7 +71,7 @@ func TestOrderMessages(t *testing.T) {
 
 		return SagaNext(stateThird), nil
 	})
-	saga.Step(stateThird, func(id MsgID, ctx Context, body3 io.Reader, saveCtx ContextSaverFn) (SagaStates, error) {
+	saga.Step(stateThird, func(id MsgID, ctx Context, body3 io.Reader, saveCtx ContextSaverFn) (*SagaStates, error) {
 		defer wg.Done()
 
 		expectedState := <-expectedStates
@@ -78,12 +79,12 @@ func TestOrderMessages(t *testing.T) {
 			t.Fatalf("expected state is %s but got %s", expectedState, stateFirst)
 		}
 
-		body1, _, err := machine.Fetch(id, stateFirst)
+		body1, err := blobs.Get(id, stateFirst)
 		if err != nil {
 			return SagaEnd, fmt.Errorf("cannot fetch first message: %w", err)
 		}
 		defer body1.Close()
-		body2, _, err := machine.Fetch(id, stateSecond)
+		body2, err := blobs.Get(id, stateSecond)
 		if err != nil {
 			return SagaEnd, fmt.Errorf("cannot fetch first message: %w", err)
 		}

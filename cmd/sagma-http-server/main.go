@@ -102,26 +102,6 @@ func (s *streamerType) make() sagma.StoreStreamer {
 	return &sagma.NopStreamer{}
 }
 
-type storeType struct {
-	val string
-}
-
-func (s *storeType) String() string {
-	return string(s.val)
-}
-
-func (s *storeType) Set(v string) error {
-	switch v {
-	case "memory", "files", "shards", "db":
-		s.val = v
-	case "":
-		s.val = "memory"
-	default:
-		return fmt.Errorf("invalid store type %s; known store types are 'memory', 'db', 'files' and 'shards'", v)
-	}
-	return nil
-}
-
 func healthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
@@ -214,7 +194,7 @@ func sendHandler(machine *sagma.Machine, state sagma.State) func(w http.Response
 		vars := mux.Vars(r)
 		id := sagma.MsgID(vars["messageID"])
 		defer r.Body.Close()
-		if err := machine.Receive(id, r.Body, state, sagma.NewContext()); err != nil {
+		if err := machine.Receive(id, state, sagma.NewContext(), r.Body); err != nil {
 			elog.Printf("cannot put message: %v\n", err)
 			http.Error(w, err.Error(), httpErrorCode(err))
 			return
@@ -225,9 +205,7 @@ func sendHandler(machine *sagma.Machine, state sagma.State) func(w http.Response
 }
 
 func main() {
-	storeType := &storeType{}
 	streamerType := &streamerType{}
-	flag.Var(storeType, "store", "Type of backing store")
 	flag.Var(streamerType, "compression", "Type of compression to use for data at rest")
 	workers := flag.Int("workers", 10, "Number of state machine workers to run")
 	filesRoot := flag.String("files-root", "", "Root folder for files storage")
@@ -252,36 +230,25 @@ func main() {
 
 	states := []sagma.State{stateFirst, stateSecond, stateThird}
 
-	var (
-		store sagma.Store
-		err   error
-	)
-	switch storeType.val {
-	case "files":
-		store, err = sagma.NewFilestore(loggers, *filesRoot, states, streamerType.make())
-	case "shards":
-		store, err = sagma.NewShardstore(loggers, *filesRoot, states, streamerType.make())
-	case "db":
-		if *user == "" || *host == "" || *dbname == "" {
-			elog.Fatalf("specify user, host and db name for database store")
-		}
-		store, err = sagma.NewPSQLStore(
-			loggers,
-			sagma.PSQLConnString(fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", *user, *pass, *host, *dbname)),
-			*filesRoot,
-			streamerType.make(),
-			"messages",
-			sagma.NewTimeouts(),
-			states,
-		)
-	default:
-		store = sagma.NewMemstore()
+	if *filesRoot == "" {
+		elog.Fatalf("specify a files root for storing messages bodies")
 	}
-	if err != nil {
-		elog.Fatalf("cannot initialize %s store: %w", storeType.val, err)
+	if *user == "" || *host == "" || *dbname == "" {
+		elog.Fatalf("specify user, host and db name for database store")
 	}
 
-	machine := sagma.NewMachine(saga, store, loggers, 10)
+	blobs := sagma.NewFileBlobStore(*filesRoot, streamerType.make())
+	store, err := sagma.NewPSQLStore(
+		loggers,
+		sagma.PSQLConnString(fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", *user, *pass, *host, *dbname)),
+		"messages",
+		sagma.NewTimeouts(),
+		states)
+	if err != nil {
+		elog.Fatalf("cannot initialize store: %v", err)
+	}
+
+	machine := sagma.NewMachine(saga, store, blobs, loggers, 10)
 	saga.Begin(stateFirst, func(id sagma.MsgID, ctx sagma.Context, body io.Reader, saveCtx sagma.ContextSaverFn) (*sagma.SagaStates, error) {
 		dlog.Printf("*** 1 handling first state completed for %s\n", id)
 
@@ -359,7 +326,7 @@ func main() {
 
 	ilog.Printf("listening on %s", *listen)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		elog.Fatalf("cannot start HTTP server: %w", err)
+		elog.Fatalf("cannot start HTTP server: %v", err)
 	}
 	<-exited
 }
