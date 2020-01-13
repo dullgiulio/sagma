@@ -72,4 +72,18 @@ type MessageVisitor interface {
 	Failed(id MsgID, state State, failed error, ctx Context) error
 }
 
-type NotFoundError error
+type NotFoundError struct {
+	err error
+}
+
+func newNotFoundError(err error) error {
+	return &NotFoundError{err: err}
+}
+
+func (e *NotFoundError) IsUserError() bool {
+	return true
+}
+
+func (e *NotFoundError) Error() string {
+	return e.err.Error()
+}

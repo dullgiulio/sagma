@@ -7,8 +7,35 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
+
+type pgUserError struct {
+	err error
+}
+
+// Returns the error wrapped in a pgUserError if it is a user error
+func pgMaybeUserError(err error) error {
+	if pqerr, ok := err.(*pq.Error); ok {
+		errcls := pqerr.Code.Class()
+		if errcls == "22" || errcls == "23" {
+			return newPgUserError(err)
+		}
+	}
+	return err
+}
+
+func newPgUserError(err error) error {
+	return &pgUserError{err: err}
+}
+
+func (e *pgUserError) IsUserError() bool {
+	return true
+}
+
+func (e *pgUserError) Error() string {
+	return e.err.Error()
+}
 
 type pgQueries struct {
 	pgQueryINSERT         string
@@ -132,7 +159,7 @@ func (s *PSQLStore) Store(transaction Transaction, id MsgID, blobID BlobID, st S
 		return fmt.Errorf("cannot marshal JSON context: %w", err)
 	}
 	if _, err := s.queries.insertNewContext(t.tx, id, st, status, blobID, string(ctxJSON)); err != nil {
-		return fmt.Errorf("cannot insert message %s: %w", id, err)
+		return fmt.Errorf("cannot insert message %s: %w", id, pgMaybeUserError(err))
 	}
 	return nil
 }
@@ -152,7 +179,7 @@ func (s *PSQLStore) StoreContext(transaction Transaction, id MsgID, st State, ct
 		return fmt.Errorf("cannot get rows affected: %w", err)
 	}
 	if nrows == 0 {
-		return fmt.Errorf("context for message %s at status %s was not updated", id, st)
+		return newNotFoundError(fmt.Errorf("context for message %s at status %s was not updated", id, st))
 	}
 	return nil
 }
@@ -229,20 +256,20 @@ func (s *PSQLStore) StoreStateStatus(transaction Transaction, id MsgID, st State
 	t := transaction.(*txSQL)
 	if currStatus == stateStatusWaiting {
 		if _, err := s.queries.insertNew(t.tx, id, st, nextStatus); err != nil {
-			return fmt.Errorf("cannot insert placeholder for message %s at state %s in status %v: %w", id, st, currStatus, err)
+			return fmt.Errorf("cannot insert placeholder for message %s at state %s in status %v: %w", id, st, currStatus, pgMaybeUserError(err))
 		}
 		return nil
 	}
 	res, err := s.queries.updateStatus(t.tx, nextStatus, id, st, currStatus)
 	if err != nil {
-		return fmt.Errorf("cannot update message %s at state %s from status %s: %w", id, st, currStatus, err)
+		return fmt.Errorf("cannot update message %s at state %s from status %s: %w", id, st, currStatus, pgMaybeUserError(err))
 	}
 	nrows, err := res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("cannot get rows affected: %w", err)
 	}
 	if nrows == 0 {
-		return fmt.Errorf("message %s at status %s was not updated", id, currStatus)
+		return newNotFoundError(fmt.Errorf("message %s at status %s was not updated", id, currStatus))
 	}
 	return nil
 }

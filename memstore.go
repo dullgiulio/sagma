@@ -8,6 +8,22 @@ import (
 	"sync"
 )
 
+type memUserError struct {
+	err error
+}
+
+func newMemUserError(err error) error {
+	return &memUserError{err: err}
+}
+
+func (e *memUserError) IsUserError() bool {
+	return true
+}
+
+func (e *memUserError) Error() string {
+	return e.err.Error()
+}
+
 var _ BlobStore = NewBlobMemstore()
 
 type BlobMemstore struct {
@@ -43,7 +59,7 @@ func (b *BlobMemstore) Get(id MsgID, state State) (io.ReadCloser, error) {
 
 	bs, ok := b.values[blobID]
 	if !ok {
-		return nil, fmt.Errorf("blob of key %s does not exist", blobID)
+		return nil, newMemUserError(fmt.Errorf("blob of key %s does not exist", blobID))
 	}
 	return ioutil.NopCloser(bytes.NewReader(bs)), nil
 }
@@ -82,7 +98,7 @@ func (m *Memstore) Store(tx Transaction, id MsgID, blobID BlobID, st State, stat
 		stateMsg[st] = msgs
 	}
 	if _, ok = msgs[id]; ok {
-		return fmt.Errorf("message %s already in store at state %s in status %s", id, st, status)
+		return newMemUserError(fmt.Errorf("message %s already in store at state %s in status %s", id, st, status))
 	}
 	msgs[id] = blobID
 	return nil
@@ -123,7 +139,7 @@ func (m *Memstore) Fetch(tx Transaction, id MsgID, state State, status StateStat
 		return msgs[id], true
 	}()
 	if !ok {
-		return blobID, nil, NotFoundError(fmt.Errorf("message %s not found at state %s in status %s", id, state, status))
+		return blobID, nil, newNotFoundError(fmt.Errorf("message %s not found at state %s in status %s", id, state, status))
 	}
 	ctx := Context(make(map[string]interface{})) // TODO: fetch
 	return blobID, ctx, nil
@@ -148,7 +164,7 @@ func (m *Memstore) StoreStateStatus(tx Transaction, id MsgID, st State, currStat
 		return msg, true
 	}()
 	if !ok {
-		return fmt.Errorf("cannot move message marker from state %s", currStatus)
+		return newMemUserError(fmt.Errorf("cannot move message marker from state %s", currStatus))
 	}
 	stateMsg, ok := m.statusStateMsg[nextStatus]
 	if !ok {

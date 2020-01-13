@@ -71,6 +71,11 @@ func NewTimeouts() *Timeouts {
 	}
 }
 
+type UserError interface {
+	IsUserError() bool
+	error
+}
+
 const (
 	stateStatusWaiting      StateStatus = ""              // no message yet
 	stateStatusRecvWaiting  StateStatus = "recv-waiting"  // message but not runnable

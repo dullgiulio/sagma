@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -108,12 +109,14 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func httpErrorCode(err error) int {
-	switch err.(type) {
-	case sagma.NotFoundError:
+	if errors.Is(err, &sagma.NotFoundError{}) {
 		return http.StatusNotFound
-	default:
-		return http.StatusInternalServerError
 	}
+	var userError sagma.UserError
+	if errors.Is(err, userError) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 type messageStateStatuses map[sagma.State]interface{}
